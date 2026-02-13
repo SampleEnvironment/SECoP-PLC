@@ -31,5 +31,7 @@ project/**/*.theirs
 .apsession
 
 # Allow Python code generator folder
-!code-generator/
-!code-generator/**
+!/code-generator/
+!/code-generator/*
+!/code-generator/**
+
