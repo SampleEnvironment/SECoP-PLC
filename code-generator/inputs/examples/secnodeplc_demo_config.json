@@ -1,0 +1,609 @@
+{
+  "equipment_id": "PLC SEC Node Demo",
+  "description": "PLC SEC Node Demo. Structure obtained from the Frappy demo server and then modified for PLC software development and testing purposes",
+  "firmware": "secnodeplc-1.0.0",
+  "x-plc": {
+    "tcp": {
+      "server_ip": "192.168.1.10",
+      "server_port": 10767,
+      "interface_healthy_tag": "G_stStatusPlc.G_xEthReady_If2"
+    },
+    "secop_version": "V2019-09-16",
+    "plc_timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr"
+  },
+  "modules": {
+    "heatswitch": {
+      "interface_classes": ["Drivable"],
+      "features": [],
+      "description": "Heatswitch for `mf` device",
+      "implementation": "github.com/SampleEnvironment/SECoP/PLC/HeatSwitch",
+      "accessibles": {
+        "value": {
+          "description": "current state (on or off)",
+          "datainfo": {
+            "type": "enum",
+            "members": {
+              "off": 0,
+              "on": 1
+            }
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100,
+                  "WARN": 200,
+                  "BUSY": 300,
+                  "ERROR": 400
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "target": {
+          "description": "wanted state (on or off)",
+          "datainfo": {
+            "type": "enum",
+            "members": {
+              "off": 0,
+              "on": 1
+            }
+          },
+          "readonly": false
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "type": "double",
+            "unit": "s",
+            "min": 0.1,
+            "max": 120.0
+          },
+          "readonly": false
+        },
+        "stop": {
+          "description": "not implemented - this is a no-op",
+          "datainfo": {
+            "type": "command"
+          }
+        },
+        "clear_errors": {
+          "description": "try to clear error state command",
+          "datainfo": {
+            "type": "command"
+          },
+          "readonly": false
+        }
+      },
+      "x-plc": {
+        "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
+        "value": {
+          "enum_tag": "G_iHeatSwitchStatus",
+          "enum_member_map": {
+            "off": "G_iHeatSwitchStatus = FALSE",
+            "on": "G_iHeatSwitchStatus = TRUE"
+          }
+        },
+        "status": {
+          "hw_error_expr": "G_xHeatSwitchHwError",
+          "hw_error_description": "Cryomagnet heatswitch fault"
+        },
+        "target": {
+          "enum_tag": "G_iHeatSwitchCmd",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;",
+          "reach_timeout_s": 60
+        },
+        "clear_errors": {
+          "cmd_stmt": ""
+        }
+      }
+    },
+    "mf": {
+      "interface_classes": [
+        "Drivable"
+      ],
+      "features": [],
+      "description": "simulates some cryomagnet with persistent/non-persistent switching",
+      "implementation": "github.com/SampleEnvironment/SECoP/PLC/Magnet",
+      "accessibles": {
+        "value": {
+          "description": "current field in T",
+          "datainfo": {
+            "type": "double",
+            "unit": "T",
+            "min": -15.0,
+            "max": 15.0
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "DISABLED": 0,
+                  "IDLE": 100,
+                  "WARN": 200,
+                  "BUSY": 300,
+                  "ERROR": 400
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "target": {
+          "description": "target field in T",
+          "datainfo": {
+            "type": "double",
+            "unit": "T",
+            "min": -15.0,
+            "max": 15.0
+          },
+          "readonly": false
+        },
+        "target_limits": {
+          "description": "target range restriction",
+          "datainfo": {
+            "type": "double",
+            "unit": "%",
+            "min": -11,
+            "max": 11
+          },
+          "readonly": true
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "type": "double",
+            "unit": "s",
+            "min": 0.1,
+            "max": 120.0
+          },
+          "readonly": false
+        },
+        "stop": {
+          "description": "stop at current value",
+          "datainfo": {
+            "type": "command"
+          }
+        },
+        "clear_errors": {
+          "description": "try to clear error state command",
+          "datainfo": {
+            "type": "command"
+          },
+          "readonly": false
+        }
+      },
+      "x-plc": {
+        "timestamp_tag": "",
+        "value": {
+          "read_expr": "REAL_TO_LREAL(G_rMf)"
+        },
+        "status": {
+          "disabled_expr": "G_xMfInMaintenance",
+          "disabled_description": "Cryomagnet in maintenance mode",
+          "hw_error_expr": "G_xMfHwError",
+          "hw_error_description": "Cryomagnet fault"
+        },
+        "target": {
+          "write_stmt": "G_rMfSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_mf.lrTargetChangeNewVal);",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;",
+          "reach_timeout_s": 300,
+          "reach_abs_tolerance" : 0.1
+        },
+        "clear_errors": {
+          "cmd_stmt": ""
+        }
+      }
+    },
+    "ts": {
+      "interface_classes": [
+        "Drivable"
+      ],
+      "features": [],
+      "description": "some temperature",
+      "implementation": "github.com/SampleEnvironment/SECoP/PLC/TempSensor",
+      "accessibles": {
+        "value": {
+          "description": "Sample temperature",
+          "datainfo": {
+            "type": "double",
+            "unit": "K"
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100,
+                  "WARN": 200,
+                  "BUSY": 300,
+                  "ERROR": 400
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "target": {
+          "description": "target value of the module",
+          "datainfo": {
+            "type": "double",
+            "unit": "K",
+            "min": 10.0,
+            "max": 300.0
+          },
+          "readonly": false
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "type": "double",
+            "unit": "s",
+            "min": 0.1,
+            "max": 120.0
+          },
+          "readonly": false
+        },
+        "stop": {
+          "description": "not implemented - this is a no-op",
+          "datainfo": {
+            "type": "command"
+          }
+        },
+        "clear_errors": {
+          "description": "try to clear error state command",
+          "datainfo": {
+            "type": "command"
+          },
+          "readonly": false
+        },
+        "_sensor": {
+          "description": "Sensor number or calibration id",
+          "datainfo": {
+            "type": "string",
+            "maxchars": 80
+          },
+          "readonly": true
+        }
+      },
+      "x-plc": {
+        "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
+        "value": {
+          "read_expr": "REAL_TO_LREAL(G_rSampleChTemp)"
+        },
+        "status": {
+          "disabled_expr": "",
+          "disabled_description": "",
+          "hw_error_expr": "G_xSampleChHwError",
+          "hw_error_description": "Sample chamber Temperature Sensor fault"
+        },
+        "target": {
+          "write_stmt": "G_rSampleChTempSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_ts.lrTargetChangeNewVal);",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;",
+          "reach_timeout_s": 60,
+          "reach_abs_tolerance": 0.1
+        },
+        "clear_errors": {
+          "cmd_stmt": ""
+        }
+      }
+    },
+    "tc1": {
+      "interface_classes": [
+        "Readable"
+      ],
+      "features": [],
+      "description": "some temperature",
+      "implementation": "github.com/SampleEnvironment/SECoP/PLC/lakeshore336",
+      "accessibles": {
+        "value": {
+          "description": "Coil temperatur",
+          "datainfo": {
+            "type": "double",
+            "unit": "K"
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100,
+                  "WARN": 200,
+                  "ERROR": 400
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "type": "double",
+            "unit": "s",
+            "min": 0.1,
+            "max": 120.0
+          },
+          "readonly": false
+        },
+        "clear_errors": {
+          "description": "try to clear error state command",
+          "datainfo": {
+            "type": "command"
+          },
+          "readonly": false
+        },
+        "_sensor": {
+          "description": "Sensor number or calibration id",
+          "datainfo": {
+            "type": "string",
+            "maxchars": 80
+          },
+          "readonly": true
+        },
+        "_customcommand": {
+          "description": "Sensor number or calibration id",
+          "datainfo": {
+            "type": "command",
+            "argument": {"type": "string"}
+          },
+          "readonly": true
+        }
+      },
+      "x-plc": {
+        "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
+        "value": {
+          "read_expr": "REAL_TO_LREAL(G_rTc1ChannelATemp)"
+        },
+        "clear_errors": {
+          "cmd_stmt": ""
+        }
+      }
+    },
+    "tc2": {
+      "interface_classes": [
+        "Readable"
+      ],
+      "features": [],
+      "description": "some temperature",
+      "implementation": "github.com/SampleEnvironment/SECoP/PLC/lakeshore336",
+      "accessibles": {
+        "value": {
+          "description": "Coil temperatur",
+          "datainfo": {
+            "type": "double",
+            "unit": "K"
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100,
+                  "WARN": 200,
+                  "ERROR": 400
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "type": "double",
+            "unit": "s",
+            "min": 0.1,
+            "max": 120.0
+          },
+          "readonly": false
+        },
+        "clear_errors": {
+          "description": "try to clear error state command",
+          "datainfo": {
+            "type": "command"
+          },
+          "readonly": false
+        },
+        "_sensor": {
+          "description": "Sensor number or calibration id",
+          "datainfo": {
+            "type": "string",
+            "maxchars": 80
+          },
+          "readonly": true
+        }
+      },
+      "x-plc": {
+        "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
+        "value": {
+          "read_expr": "REAL_TO_LREAL(G_rTc2ChannelATemp)"
+        },
+        "clear_errors": {
+          "cmd_stmt": ""
+        }
+      }
+    },
+    "label": {
+      "interface_classes": [
+        "Readable"
+      ],
+      "features": [],
+      "description": "some label indicating the state of the magnet `mf`.",
+      "implementation": "frappy_demo.modules.Label",
+      "accessibles": {
+        "value": {
+          "description": "final value of label string",
+          "datainfo": {
+            "type": "string",
+            "maxchars": 255
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100,
+                  "WARN": 200,
+                  "ERROR": 400
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "type": "double",
+            "unit": "s",
+            "min": 0.1,
+            "max": 120.0
+          },
+          "readonly": false
+        }
+      },
+      "x-plc": {
+        "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
+        "value": {
+          "read_expr": "G_sProcessStatus"
+        }
+      }
+    },
+    "currentsp": {
+      "interface_classes": [
+        "Writable"
+      ],
+      "features": [],
+      "description": "Current setpoint",
+      "implementation": "github.com/SampleEnvironment/SECoP/PLC/currentsetpoint",
+      "accessibles": {
+        "value": {
+          "description": "current value of the module",
+          "datainfo": {
+            "type": "double",
+            "unit": "mA"
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100,
+                  "WARN": 200,
+                  "ERROR": 400
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "target": {
+          "description": "target value of the module",
+          "datainfo": {
+            "type": "double",
+            "unit": "mA",
+            "min": 0.0,
+            "max": 1000.0
+          },
+          "readonly": false
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "type": "double",
+            "unit": "s",
+            "min": 0.1,
+            "max": 120.0
+          },
+          "readonly": false
+        },
+        "clear_errors": {
+          "description": "try to clear error state command",
+          "datainfo": {
+            "type": "command"
+          },
+          "readonly": false
+        }
+      },
+      "x-plc": {
+        "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
+        "value": {
+          "read_expr": "GVL_SecNode.G_st_currentsp.lrTarget"
+        },
+        "status": {
+          "disabled_expr": "",
+          "disabled_description": "",
+          "hw_error_expr": "G_xCurrentSpHwError",
+          "hw_error_description": "Current Setpoint device fault"
+        },
+        "target": {
+          "write_stmt": "G_lrCurrentSpApplied :=  GVL_SecNode.G_st_currentsp.lrTarget;",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;"
+        },
+        "clear_errors": {
+          "cmd_stmt": ""
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,332 @@
+{
+  "modules": {
+    "heatswitch": {
+      "accessibles": {
+        "value": {
+          "description": "current state (on or off)",
+          "datainfo": {
+            "type": "enum",
+            "members": {
+              "off": 0,
+              "on": 1
+            }
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100, "WARN": 200, "BUSY": 300, "ERROR": 400
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "target": {
+          "description": "wanted state (on or off)",
+          "datainfo": {
+            "type": "enum",
+            "members": {
+              "off": 0, "on": 1
+            }
+          },
+          "readonly": false
+        },
+        "pollinterval":
+        {
+          "description": "default poll interval",
+          "datainfo": {
+            "unit": "s", "min": 0.1, "max": 120.0, "type": "double"
+          },
+          "readonly": false
+        },
+        "stop": {
+          "description": "not implemented - this is a no-op",
+          "datainfo": {
+            "type": "command"
+          }
+        }
+      },
+      "description": "Heatswitch for `mf` device",
+      "implementation": "frappy_demo.modules.Switch",
+      "interface_classes": ["Drivable"],
+      "features": []
+    },
+    "mf": {
+      "accessibles": {
+        "value": {
+          "description": "current field in T",
+          "datainfo": {
+            "unit": "T", "min": -15.0, "max": 15.0, "type": "double"
+          },
+          "readonly": true
+        },
+        "status":
+        {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100, "PERSIST": 101, "WARN": 200, "BUSY": 300, "PREPARE": 301, "RAMPING": 302, "FINISH": 303, "ERROR": 400
+                }
+              },
+              {
+                "type": "string"}
+            ]
+          },
+          "readonly": true
+        },
+        "target":
+        {
+          "description": "target field in T",
+          "datainfo": {
+            "unit": "T",
+            "min": -15.0,
+            "max": 15.0,
+            "type": "double"
+          },
+          "readonly": false
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "unit": "s", "min": 0.1, "max": 120.0, "type": "double"
+          },
+          "readonly": false
+        },
+        "ramp": {
+          "description": "ramping speed",
+          "datainfo": {
+            "unit": "T/min", "min": 0.0, "max": 1.0, "type": "double"
+          },
+          "readonly": false
+        },
+        "mode":
+        {
+          "description": "what to do after changing field",
+          "datainfo": {
+            "type": "enum", "members": {
+              "hold": 0, "persistent": 1}
+          },
+          "readonly": false
+        },
+        "stop": {
+          "description": "stop at current value",
+          "datainfo": {"type": "command"}
+        }
+      },
+      "description": "simulates some cryomagnet with persistent/non-persistent switching",
+      "implementation": "frappy_demo.modules.MagneticField",
+      "interface_classes": ["Drivable"],
+      "features": []
+    },
+    "ts": {
+      "accessibles": {
+        "value":
+        {
+          "description": "Sample temperature",
+          "datainfo": {
+            "unit": "K", "type": "double"
+          }, "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100, "WARN": 200, "BUSY": 300, "ERROR": 400
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "target": {
+          "description": "target value of the module",
+          "datainfo": {
+            "unit": "K",
+            "type": "double"
+          },
+          "readonly": false
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "unit": "s",
+            "min": 0.1,
+            "max": 120.0,
+            "type": "double"
+          },
+          "readonly": false
+        },
+        "ramp": {
+          "description": "moving speed in K/min",
+          "datainfo": {
+            "unit": "K/min",
+            "min": 0.0,
+            "max": 100.0,
+            "type": "double"
+          },
+          "readonly": false
+        },
+        "stop": {
+          "description": "not implemented - this is a no-op",
+          "datainfo": {"type": "command"}},
+        "_sensor": {"description": "Sensor number or calibration id",
+          "datainfo": {
+            "type": "string"
+          },
+          "readonly": true
+        }
+      },
+      "description": "some temperature",
+      "implementation": "frappy_demo.modules.SampleTemp",
+      "interface_classes": ["Drivable"],
+      "features": []
+    },
+    "tc1": {
+      "accessibles": {
+        "value": {
+          "description": "Coil temperatur",
+          "datainfo": {
+            "unit": "K",
+            "type": "double"
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "enum",
+                "members": {"IDLE": 100, "WARN": 200, "ERROR": 400}},
+              {"type": "string"}]
+          },
+          "readonly": true
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "unit": "s", "min": 0.1, "max": 120.0, "type": "double"
+          },
+          "readonly": false
+        },
+        "_sensor": {
+          "description": "Sensor number or calibration id",
+          "datainfo": {
+            "type": "string"
+          }, "readonly": true
+        }},
+      "description": "some temperature",
+      "implementation": "frappy_demo.modules.CoilTemp",
+      "interface_classes": ["Readable"],
+      "features": []
+    },
+    "tc2": {
+      "accessibles": {
+        "value": {
+          "description": "Coil temperatur",
+          "datainfo": {
+            "unit": "K",
+            "type": "double"
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple", "members": [
+              {
+                "type": "enum",
+                "members": {
+                  "IDLE": 100, "WARN": 200, "ERROR": 400
+                }
+              },
+              {"type": "string"}
+            ]
+          },
+          "readonly": true
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "unit": "s", "min": 0.1, "max": 120.0, "type": "double"
+          },
+          "readonly": false
+        },
+        "_sensor":
+        {
+          "description": "Sensor number or calibration id",
+          "datainfo": {
+            "type": "string"
+          }, "readonly": true
+        }
+      },
+      "description": "some temperature",
+      "implementation": "frappy_demo.modules.CoilTemp",
+      "interface_classes": ["Readable"],
+      "features": []
+    },
+    "label": {
+      "accessibles": {
+        "value": {
+          "description": "final value of label string",
+          "datainfo": {
+            "type": "string"
+          },
+          "readonly": true
+        },
+        "status": {
+          "description": "current status of the module",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {"type": "enum",
+                "members": {"IDLE": 100, "WARN": 200, "ERROR": 400}
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "readonly": true
+        },
+        "pollinterval": {
+          "description": "default poll interval",
+          "datainfo": {
+            "unit": "s",
+            "min": 0.1,
+            "max": 120.0,
+            "type": "double"
+          },
+          "readonly": false
+        }
+      },
+      "description": "some label indicating the state of the magnet `mf`.",
+      "implementation": "frappy_demo.modules.Label",
+      "interface_classes": ["Readable"],
+      "features": []}
+  },
+  "equipment_id": "demo.frappy.demo",
+  "firmware": "FRAPPY 0.9.0",
+  "description": "Basic demo server for frappy"}
