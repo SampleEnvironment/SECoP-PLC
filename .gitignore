@@ -29,3 +29,7 @@ project/**/*.theirs
 
 # Ignore .apsession
 .apsession
+
+# Allow Python code generator folder
+!code-generator/
+!code-generator/**
