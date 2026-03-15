@@ -45,6 +45,7 @@ from codegen.rules.plc_rules import (
     rule_xplc_target_reach_fields,
     rule_xplc_value_mapping_by_type,
     rule_xplc_target_mapping_by_type,
+    rule_xplc_value_outofrange_numeric_only,
     rule_xplc_clear_errors_cmd_stmt_optional,
 )
 
@@ -84,6 +85,7 @@ def validate_config(cfg: SecNodeConfig) -> List[Finding]:
     findings.extend(rule_xplc_target_reach_fields(cfg))                 # R-PLC-024/025
     findings.extend(rule_xplc_value_mapping_by_type(cfg))               # R-PLC-030/031
     findings.extend(rule_xplc_target_mapping_by_type(cfg))              # R-PLC-032/033
+    findings.extend(rule_xplc_value_outofrange_numeric_only(cfg))       # R-PLC-034
     findings.extend(rule_xplc_clear_errors_cmd_stmt_optional(cfg))      # R-PLC-040
 
     return findings

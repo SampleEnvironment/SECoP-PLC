@@ -592,6 +592,66 @@ def rule_xplc_target_mapping_by_type(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
+def rule_xplc_value_outofrange_numeric_only(cfg: SecNodeConfig) -> List[Finding]:
+    """
+    R-PLC-034:
+    x-plc.value.outofrange_min/outofrange_max (optional) are only allowed for numeric SECoP value types
+    ('double' or 'int') and must be configured together (both min and max).
+    """
+    findings: List[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        xplc = mod.x_plc
+        if not xplc or xplc.value is None:
+            continue
+
+        accs = mod.accessibles or {}
+        if "value" not in accs:
+            continue
+
+        v_type = (accs["value"].datainfo.type or "").strip()
+        v_cfg = xplc.value
+
+        oor_min = v_cfg.outofrange_min
+        oor_max = v_cfg.outofrange_max
+
+        # Nothing configured => OK (no warning)
+        if oor_min is None and oor_max is None:
+            continue
+
+        # If configured, restrict to numeric only
+        if v_type not in ("double", "int"):
+            findings.append(
+                Finding(
+                    rule_id="R-PLC-034",
+                    severity=Severity.ERROR,
+                    path=f"$.modules.{mod_name}.x-plc.value",
+                    message=(
+                        "Invalid x-plc.value out-of-range configuration: outofrange_min/outofrange_max "
+                        "are only allowed for numeric SECoP value types ('double' or 'int')."
+                    ),
+                )
+            )
+            continue
+
+        # Numeric type => require both
+        if oor_min is None or oor_max is None:
+            findings.append(
+                Finding(
+                    rule_id="R-PLC-034",
+                    severity=Severity.ERROR,
+                    path=f"$.modules.{mod_name}.x-plc.value",
+                    message=(
+                        "Invalid x-plc.value out-of-range configuration: the out-of-range feature "
+                        "requires both outofrange_min and outofrange_max to be set."
+                    ),
+                )
+            )
+            continue
+
+    return findings
+
+
 def rule_xplc_clear_errors_cmd_stmt_optional(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-PLC-040:

@@ -150,7 +150,7 @@ def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Fi
                     rule_id="R-MOD-002",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.features",
-                    message="Unsupported feature(s) in module.features (not implemented on this PLC SEC node).",
+                    message="Unsupported feature(s) in module.features.",
                     hint=f"Only supported protocol feature name is 'HasOffset' (but PLC does not implement it). Unknown={unknown}",
                 )
             )
@@ -161,8 +161,12 @@ def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Fi
                     rule_id="R-MOD-002",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.features",
-                    message="features includes 'HasOffset', but this PLC SEC node does not implement HasOffset.",
-                    hint="For PLC nodes, offset/scaling/format conversions should be handled directly in PLC logic; provide the final scaled value via 'value'.",
+                    message="features includes 'HasOffset', but this PLC-based SEC node does not require the HasOffset feature.",
+                    hint=(
+                        "There is no need to use protocol-level offsets. "
+                        "The SEC node implemented in the PLC can directly handle the desired "
+                        "scaling and format conversions and expose the final values."
+                    ),
                 )
             )
 
@@ -172,8 +176,12 @@ def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Fi
                     rule_id="R-MOD-002",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.offset",
-                    message="Module defines 'offset', but this PLC SEC node does not implement the offset accessible.",
-                    hint="For PLC nodes, apply offsets in PLC logic and expose only the final scaled value via 'value'.",
+                    message="Module defines 'offset', but protocol-level offset handling is not required for this PLC-based SEC node.",
+                    hint=(
+                        "There is no need to use protocol-level offsets. "
+                        "The SEC node implemented in the PLC can directly handle the desired "
+                        "scaling and format conversions internally."
+                    ),
                 )
             )
 
@@ -614,7 +622,7 @@ def rule_string_requires_maxchars(cfg: SecNodeConfig) -> List[Finding]:
                             severity=Severity.ERROR,
                             path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.maxchars",
                             message="datainfo.maxchars is required (>0) when datainfo.type == 'string'.",
-                            hint="Set maxchars so the generator can declare a PLC STRING with a fixed length.",
+                            hint="Set maxchars so that the generator can declare a PLC STRING with a fixed length.",
                         )
                     )
 

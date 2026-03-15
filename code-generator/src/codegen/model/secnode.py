@@ -129,7 +129,8 @@ class PlcValueConfig(StrictBaseModel):
     read_expr: Optional[str] = None
     enum_tag: Optional[str] = None
     enum_member_map: Optional[Dict[str, str]] = None
-
+    outofrange_min: Optional[float] = None
+    outofrange_max: Optional[float] = None
 
 class PlcStatusConfig(StrictBaseModel):
     """
