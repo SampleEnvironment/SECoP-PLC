@@ -3,20 +3,37 @@ ST generator for FB_SecopProcessModules based on the resolved model.
 
 This emitter generates:
 1) FUNCTION_BLOCK FB_SecopProcessModules IMPLEMENTS SECOP.I_ProcessModules
-2) internal FB_Module_<modclass> instances (one per actual module)
+2) one internal FB_Module_<moduleclass> instance per real module
 3) METHOD Run : BOOL
 4) the body of Run, which calls each module FB and maps:
    - common readable signals
-   - writable/drivable common signals
-   - module-specific variables from GVL_SecNode
+   - writable / drivable common signals
+   - all module-specific variables from GVL_SecNode
 
-Important design rule:
-- This emitter must not parse raw / normalized JSON structure.
-- It consumes the resolved model only.
+Important design rule
+---------------------
+This emitter must not parse raw or normalized JSON structures.
+It consumes only the resolved model.
 
-Order policy:
-- Module declaration order follows resolved.module_to_class insertion order.
-- Method Run processes modules in that same order.
+Order policy
+------------
+- module declaration order follows resolved.module_to_class insertion order
+- METHOD Run processes modules in that same order
+
+Design note
+-----------
+This emitter does not need to know whether a module-specific variable comes
+from:
+- standard value/target logic,
+- a customised parameter,
+- a customised command.
+
+It simply maps all resolved module variables from:
+    GVL_SecNode.G_st_<module>.<var>
+to:
+    iq_<var>
+
+That keeps the wiring generic and stable even as the resolve layer evolves.
 """
 
 from __future__ import annotations
@@ -46,8 +63,8 @@ def _emit_common_interface_block() -> list[str]:
     This avoids duplicating the same VAR_INPUT / VAR_IN_OUT block twice.
 
     Important:
-    - The variable names must match the SECOP library interface.
-    - We now use 'i_sModuleRequested' consistently.
+    - variable names must match the SECOP library interface
+    - i_sModuleRequested is used consistently throughout the generated code
     """
     lines: list[str] = []
 
@@ -59,7 +76,7 @@ def _emit_common_interface_block() -> list[str]:
     lines.append(" // Accessible (parameter, property or command)")
     lines.append(" i_sAccessibleName: STRING(SECOP.GCL.Gc_uiMaxSizeIdentifier);")
     lines.append(" // Data")
-    lines.append(" i_sData: STRING(SECOP.GPL.Gc_uiMaxSizeMessage); ")
+    lines.append(" i_sData: STRING(SECOP.GPL.Gc_uiMaxSizeMessage);")
     lines.append(" // Monitored client")
     lines.append(" i_stClientMonitored: SECOP.ST_Subscriber;")
     lines.append(" // Disconnected client")
@@ -70,12 +87,12 @@ def _emit_common_interface_block() -> list[str]:
     lines.append(" i_xSyncModeRequest: BOOL;")
     lines.append(" // (Flag) 'i_stClientMonitored' is the first in server's list")
     lines.append(" i_xFirstSecopClient: BOOL;")
-    lines.append(" // (Flag) All clients in server's list were processed")
-    lines.append(" i_xAllSecopClientsDone: BOOL; ")
+    lines.append(" // (Flag) all clients in server's list were processed")
+    lines.append(" i_xAllSecopClientsDone: BOOL;")
     lines.append("END_VAR")
 
     lines.append("VAR_IN_OUT")
-    lines.append(" /// Reply message")
+    lines.append(" // Reply message")
     lines.append(" iq_sReplyMessage: STRING(SECOP.GPL.Gc_uiMaxSizeMessage);")
     lines.append("END_VAR")
 
@@ -94,7 +111,7 @@ def _emit_fb_header() -> list[str]:
 
 def _emit_fb_var_instances(resolved: ResolvedModuleClasses) -> list[str]:
     """
-    Emit internal FB_Module_<modclass> instances, one per actual module.
+    Emit internal FB_Module_<moduleclass> instances, one per real module.
 
     Example:
         fbModuleTc1: FB_Module_tc;
@@ -125,7 +142,8 @@ def _emit_run_header() -> list[str]:
 
 def _emit_common_readable_mappings(modname: str) -> list[str]:
     """
-    Emit mappings that always apply because Readable is implicit in all interface classes.
+    Emit mappings that always apply because Readable is implicit in all
+    supported interface classes.
     """
     return [
         " // Common from readable class",
@@ -144,7 +162,7 @@ def _emit_writable_mappings(modname: str) -> list[str]:
     Emit mappings common to Writable and Drivable modules.
     """
     return [
-        " // Specific from writable class",
+        " // Common from writable class",
         f"    iq_stTargetWrite         := GVL_SecNode.G_st_{modname}.stTargetWrite,",
         "",
     ]
@@ -161,17 +179,22 @@ def _emit_drivable_mappings(modname: str) -> list[str]:
     ]
 
 
-def _emit_module_specific_mappings(modname: str, resolved_class: ResolvedModuleClass) -> list[str]:
+def _emit_module_specific_mappings(
+    modname: str,
+    resolved_class: ResolvedModuleClass,
+) -> list[str]:
     """
     Emit mappings for all module-specific variables from the resolved model.
 
     For each resolved module variable '<var>', generate:
         iq_<var> := GVL_SecNode.G_st_<module>.<var>
 
-    Example:
-        iq_lrValue := GVL_SecNode.G_st_mf.lrValue,
-        iq_lrTargetDriveTolerance := GVL_SecNode.G_st_mf.lrTargetDriveTolerance,
-        iq_xClearErrors := GVL_SecNode.G_st_mf.xClearErrors);
+    This includes, transparently:
+    - value variables
+    - target-related variables
+    - xClearErrors
+    - customised parameters
+    - customised commands
     """
     lines: list[str] = []
     lines.append(" // Module-specific")
@@ -191,10 +214,10 @@ def _emit_run_body(resolved: ResolvedModuleClasses) -> list[str]:
     """
     Emit the body of METHOD Run.
 
-    One call is generated per actual module, in module order.
+    One FB call is generated per real module, in module order.
     """
     lines: list[str] = []
-    lines.append("// Calls to Module FBs")
+    lines.append("// Calls to module FBs")
     lines.append("")
 
     for modname, modclass in resolved.module_to_class.items():
@@ -202,24 +225,24 @@ def _emit_run_body(resolved: ResolvedModuleClasses) -> list[str]:
         instance_suffix = _pascal_case_module_name(modname)
         fb_inst = f"fbModule{instance_suffix}"
 
-        lines.append(f"// Process Module {modname}")
+        lines.append(f"// Process module {modname}")
         lines.append("// ====================================================")
         lines.append(f"{fb_inst}(")
 
         # Fixed inputs
         lines.extend([
-            "    i_sAction                := i_sAction,",
-            "    i_sModuleRequested       := i_sModuleRequested,",
-            "    i_sAccessible            := i_sAccessibleName,",
-            "    i_sData                  := i_sData,",
-            "    i_stClientMonitored      := i_stClientMonitored,",
-            "    i_stClientDisconnected   := i_stClientDisconnected,",
+            "    i_sAction                 := i_sAction,",
+            "    i_sModuleRequested        := i_sModuleRequested,",
+            "    i_sAccessible             := i_sAccessibleName,",
+            "    i_sData                   := i_sData,",
+            "    i_stClientMonitored       := i_stClientMonitored,",
+            "    i_stClientDisconnected    := i_stClientDisconnected,",
             "    i_xClientDisconnectedFlag := i_xClientDisconnectedFlag,",
-            "    i_xSyncModeRequest       := i_xSyncModeRequest,",
-            "    i_xFirstSecopClient      := i_xFirstSecopClient,",
-            "    i_xAllSecopClientsDone   := i_xAllSecopClientsDone,",
+            "    i_xSyncModeRequest        := i_xSyncModeRequest,",
+            "    i_xFirstSecopClient       := i_xFirstSecopClient,",
+            "    i_xAllSecopClientsDone    := i_xAllSecopClientsDone,",
             "",
-            "    iq_sReplyMessage         := iq_sReplyMessage,",
+            "    iq_sReplyMessage          := iq_sReplyMessage,",
             "",
         ])
 
@@ -250,7 +273,7 @@ def emit_fb_process_modules(resolved: ResolvedModuleClasses) -> str:
     - VAR with module FB instances
     - METHOD Run declaration
     - shared interface
-    - Run body with one FB call per module
+    - Run body with one FB call per real module
     """
     lines: list[str] = []
 

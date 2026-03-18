@@ -11,7 +11,7 @@ from codegen.validators.validate_config import validate_config, build_report, ha
 
 # ST code emitters
 from codegen.generators.st.emit_gvl import emit_gvl_secnode
-from codegen.generators.st.emit_types import emit_module_types
+from codegen.generators.st.emit_types import emit_all_module_types
 from codegen.generators.st.emit_fb_process_modules import emit_fb_process_modules
 from codegen.generators.st.emit_fb_module import emit_all_fb_modules
 from codegen.generators.st.emit_prg_secop_init import emit_prg_secop_init
@@ -27,10 +27,11 @@ def parse_args() -> argparse.Namespace:
     """
     Parse CLI arguments.
 
-    Why we do this:
-    - It allows running the tool from terminal or from PyCharm with parameters.
-    - It keeps the program independent from hard-coded file paths.
-    - It makes the same entry point usable for different configs and output folders.
+    Why this exists:
+    - the tool can be run from terminal or from an IDE with parameters,
+    - the program stays independent from hard-coded file paths,
+    - the same entry point can be reused for different input configs and output
+      folders.
 
     Example:
         python -m codegen.main --config inputs/secnodeplc_demo_config.json --out outputs/runs/dev
@@ -38,8 +39,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="secop-plc-codegen",
         description=(
-            "Load and validate a SECoP node config (JSON), produce a normalised version, "
-            "and generate PLC Structured Text artefacts if no validation errors exist."
+            "Load and validate a SECoP node config (JSON), produce a normalised "
+            "version, resolve PLC-oriented intermediate models, and generate "
+            "PLC Structured Text artefacts if no validation errors exist."
         ),
     )
 
@@ -58,38 +60,69 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _build_structure_report_json_from_raw(raw_cfg: dict) -> str:
+    """
+    Build the structure report JSON that will later be exposed by the SEC node
+    in response to the SECoP 'describe' command.
+
+    Important design choice:
+    - this report is built from the raw configuration,
+    - not from the normalised Pydantic dump.
+
+    Reason:
+    the protocol-facing describe structure should reflect the user-provided
+    SECoP structure without extra optional fields introduced by normalization
+    with null values.
+    """
+    def _deep_remove_x_plc(obj):
+        if isinstance(obj, dict):
+            return {
+                key: _deep_remove_x_plc(value)
+                for key, value in obj.items()
+                if key != "x-plc"
+            }
+        if isinstance(obj, list):
+            return [_deep_remove_x_plc(item) for item in obj]
+        return obj
+
+    without_x_plc = _deep_remove_x_plc(raw_cfg)
+    return json.dumps(without_x_plc, ensure_ascii=False, separators=(",", ":"))
+
+
 def main() -> int:
     """
-    Main code generation pipeline.
+    Main code-generation pipeline.
 
-    Current pipeline:
+    Current pipeline
+    ----------------
     0) Parse CLI arguments
     1) Load the input JSON file into a raw Python dict
-    2) Validate + normalise it with Pydantic
+    2) Validate and normalise it with Pydantic
     3) Run business-rule validation and write a validation report
-    4) Resolve module-class data used by ST artefacts generated per module class
-    5) Resolve real-module / SECoP-node data used by PRGs and other module-instance logic
+    4) Resolve module-class data used by class-based ST artefacts
+    5) Resolve real-module / SEC-node data used mainly by PRGs
     6) Generate PLC Structured Text files
 
-    Architectural note:
-    - We now keep two resolved views of the configuration:
-      * module classes:
-          used for ST types, FB_Module_<class>, FB_SecopProcessModules
-      * real modules:
-          used for PRGs such as SecopInit, SecopMapFromPlc and SecopMapToPlc
+    Architectural note
+    ------------------
+    Two resolved views of the configuration are kept:
 
-    Scope note:
-    - At this stage we generate ST only.
-    - PLCopenXML generation will come later, from the same validated/resolved information.
+    - module classes:
+        used for ST types, enum DUTs, FB_Module_<class>, FB_SecopProcessModules
+
+    - real modules:
+        used for PRGs such as SecopInit, SecopMapFromPlc and SecopMapToPlc
+
+    Scope note
+    ----------
+    At this stage the tool generates Structured Text only.
+    PLCopenXML generation will come later from the same validated/resolved data.
     """
     args = parse_args()
 
-    # Convert CLI strings to Path objects.
-    # Using Path keeps the code platform-independent and easier to read.
     config_path = Path(args.config)
     out_dir = Path(args.out)
 
-    # Ensure the output folder exists before writing any files.
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -111,23 +144,18 @@ def main() -> int:
         print(e)
         return 2
 
-    # Write the raw input for traceability/debugging.
-    # This is useful when comparing:
-    # - original input
-    # - normalised config
-    # - resolved models
     (out_dir / "raw_config.json").write_text(
         json.dumps(raw, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
+    # Build the protocol-facing structure report from the raw config before
+    # any normalization adds explicit null-valued optional fields.
+    structure_report_json = _build_structure_report_json_from_raw(raw)
+
     # ------------------------------------------------------------------
     # 2) Validate + normalise with Pydantic
     # ------------------------------------------------------------------
-    # Pydantic gives us:
-    # - type validation
-    # - default handling
-    # - a consistent internal model for the rest of the pipeline
     try:
         cfg = SecNodeConfig.model_validate(raw)
     except ValidationError as e:
@@ -135,9 +163,6 @@ def main() -> int:
         print(e)
         return 2
 
-    # Write the normalised config.
-    # This keeps the same meaning as the input, but with consistent structure,
-    # defaults and serialisation.
     (out_dir / "normalized_config.json").write_text(
         cfg.model_dump_json(indent=2, by_alias=True),
         encoding="utf-8",
@@ -157,24 +182,15 @@ def main() -> int:
     print("Validation summary:", report["summary"])
     print("wrote:", str(out_dir / "validation_report.json"))
 
-    # Stop the pipeline if any business-rule ERROR exists.
-    # Warnings are allowed and may later drive task-list / manual-completion logic.
     if has_errors(findings):
         print("ERROR: Business-rule validation failed. Cannot proceed.")
         return 2
 
-    # From this point on, emitters work on plain dicts / resolved dataclasses,
-    # not directly on the Pydantic model internals.
     normalized_dict = cfg.model_dump(by_alias=True)
 
     # ------------------------------------------------------------------
     # 4) Resolve module classes
     # ------------------------------------------------------------------
-    # This resolved model answers questions such as:
-    # - which modules share the same class
-    # - which ST variables exist for that class
-    # - which interface class applies
-    # - which value/target/custom fields must be generated
     try:
         resolved = resolve_module_classes(normalized_dict)
     except ValueError as e:
@@ -193,16 +209,11 @@ def main() -> int:
     # ------------------------------------------------------------------
     # 5) Resolve real modules
     # ------------------------------------------------------------------
-    # This resolved model is module-instance-oriented and includes data such as:
-    # - per-module SECoP values
-    # - per-module x-plc tooling
-    # - SECoP node settings
-    #
-    # It is used mainly by PRGs, where real module names matter directly.
     try:
         resolved_real_modules = resolve_real_modules(
             normalized_cfg=normalized_dict,
             resolved_classes=resolved,
+            structure_report_json=structure_report_json,
         )
     except ValueError as e:
         print("ERROR: failed to resolve real-module data")
@@ -222,14 +233,13 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Current generated artefacts:
     # - GVL_SecNode.st
-    # - types_modules.st
+    # - ST_Module_<class>.st and ET_Module_<class>_... .st inside st/modules/
     # - FB_SecopProcessModules.st
-    # - one FB_Module_<class>.st per module class
+    # - one FB_Module_<class>.st per module class inside st/modules/
     # - SecopInit.st
     # - SecopMapFromPlc.st
     # - SecopMapToPlc.st
     st_gvl = emit_gvl_secnode(resolved)
-    st_types = emit_module_types(resolved)
     st_fb_process_modules = emit_fb_process_modules(resolved)
     st_secop_init = emit_prg_secop_init(resolved_real_modules)
     st_secop_map_from_plc = emit_prg_secop_map_from_plc(
@@ -241,23 +251,23 @@ def main() -> int:
         resolved,
     )
 
-    # Write ST files
     out_st_dir = out_dir / "st"
     out_st_dir.mkdir(parents=True, exist_ok=True)
 
     (out_st_dir / "GVL_SecNode.st").write_text(st_gvl, encoding="utf-8")
-    (out_st_dir / "types_modules.st").write_text(st_types, encoding="utf-8")
     (out_st_dir / "FB_SecopProcessModules.st").write_text(st_fb_process_modules, encoding="utf-8")
     (out_st_dir / "SecopInit.st").write_text(st_secop_init, encoding="utf-8")
     (out_st_dir / "SecopMapFromPlc.st").write_text(st_secop_map_from_plc, encoding="utf-8")
     (out_st_dir / "SecopMapToPlc.st").write_text(st_secop_map_to_plc, encoding="utf-8")
+
+    # Generate one ST type file per module class and enum DUT file when needed.
+    emit_all_module_types(resolved.classes, out_st_dir)
 
     # Generate one FB_Module_<class>.st file per resolved module class.
     emit_all_fb_modules(resolved.classes, out_st_dir)
 
     print("ST generation done.")
     print("wrote:", str(out_st_dir / "GVL_SecNode.st"))
-    print("wrote:", str(out_st_dir / "types_modules.st"))
     print("wrote:", str(out_st_dir / "FB_SecopProcessModules.st"))
     print("wrote:", str(out_st_dir / "SecopInit.st"))
     print("wrote:", str(out_st_dir / "SecopMapFromPlc.st"))

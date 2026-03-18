@@ -3,6 +3,14 @@ Building blocks used by the FB_Module_* code generator.
 
 This file contains reusable blocks for generating FB_Module_<class>.
 The resolved model is consumed here; raw JSON must not be parsed again.
+
+Design notes
+------------
+- This file formats Structured Text only.
+- Structural applicability is decided earlier in the resolve layer.
+- Customised parameters and customised commands are already resolved and exposed
+  through the generic resolved model, so this emitter should not try to infer
+  them again from raw config.
 """
 
 from __future__ import annotations
@@ -19,15 +27,14 @@ from codegen.resolve.types import (
 # Helpers
 # ---------------------------------------------------------
 
-
 def _to_string_func_for_plc_type(plc_type: str) -> str:
     """
-    Return the ST function used to convert a value to STRING.
+    Return the ST function used to convert a scalar PLC value to STRING.
 
-    Supported:
+    Supported conversions:
     - LREAL -> LREAL_TO_STRING
     - DINT  -> DINT_TO_STRING
-    - enum  -> INT_TO_STRING (handled outside by passing "INT")
+    - INT   -> INT_TO_STRING
     """
     if plc_type == "LREAL":
         return "LREAL_TO_STRING"
@@ -40,13 +47,13 @@ def _to_string_func_for_plc_type(plc_type: str) -> str:
 
 def _value_to_string_expr(resolved: ResolvedModuleClass, var_ref: str) -> str:
     """
-    Build ST expression that converts a value-like variable to STRING.
+    Build the ST expression that converts a value-like variable to STRING.
 
     Rules:
     - numeric LREAL -> LREAL_TO_STRING(var)
     - numeric DINT  -> DINT_TO_STRING(var)
     - enum          -> INT_TO_STRING(var)
-    - string        -> requires JSON encoding and is handled elsewhere
+    - string        -> handled elsewhere through JSON string encoding
     """
     if resolved.value.is_enum:
         return f"INT_TO_STRING({var_ref})"
@@ -62,9 +69,6 @@ def _target_temp_var_name(resolved: ResolvedModuleClass) -> str:
     Rules:
     - enum -> iTargetNewVal
     - numeric/string -> <var_prefix>TargetNewVal
-
-    Note:
-    - The enum case follows the explicit user instruction/example.
     """
     if resolved.value.is_enum:
         return "iTargetNewVal"
@@ -73,7 +77,7 @@ def _target_temp_var_name(resolved: ResolvedModuleClass) -> str:
 
 def _target_temp_var_type(resolved: ResolvedModuleClass) -> str:
     """
-    Type of the temporary variable used to parse a requested target value.
+    PLC type of the temporary variable used to parse a requested target value.
     """
     if resolved.value.is_enum:
         return "INT"
@@ -82,7 +86,7 @@ def _target_temp_var_type(resolved: ResolvedModuleClass) -> str:
 
 def _emit_status_data_report(action_expr: str, accessible_expr: str) -> List[str]:
     """
-    Emit the standard status data report.
+    Emit the standard status data-report sequence.
     """
     return [
         "  A_GenerateStatusDataReport(); // Generate status data report and store it in sBuiltDataReport",
@@ -109,7 +113,7 @@ def _emit_string_data_report(
     raw_var_ref: str,
 ) -> List[str]:
     """
-    Emit M_JsonEncodeString + reply for string data.
+    Emit JSON string encoding followed by a reply message.
     """
     return [
         f"  M_JsonEncodeString(i_sRawString:= {raw_var_ref}, q_sJsonString => sBuiltDataReport); // Json-encode string and store it in sBuiltDataReport",
@@ -159,7 +163,7 @@ def _emit_custom_parameter_report_lines(
     cp: ResolvedCustomParameter,
 ) -> List[str]:
     """
-    Emit report lines for one custom parameter.
+    Emit report lines for one customised parameter.
     """
     raw_var = f"iq_{cp.plc_var_name}"
 
@@ -200,7 +204,7 @@ def _emit_all_parameter_reports(action_expr: str, resolved: ResolvedModuleClass)
     - status
     - value
     - target (if it exists)
-    - custom parameters
+    - customised parameters
     - pollinterval
 
     Not included:
@@ -231,7 +235,7 @@ def _emit_read_parameter_chain(resolved: ResolvedModuleClass) -> List[str]:
     - status
     - value
     - target (if it exists)
-    - custom parameters
+    - customised parameters
     - pollinterval
     """
     lines: List[str] = []
@@ -262,6 +266,9 @@ def _emit_read_parameter_chain(resolved: ResolvedModuleClass) -> List[str]:
 
 
 def _indent(lines: List[str], level: int = 1) -> List[str]:
+    """
+    Light indentation helper used to keep generated code readable.
+    """
     prefix = " " * (level * 1)
     return [prefix + line if line else "" for line in lines]
 
@@ -270,7 +277,7 @@ def _build_target_range_condition(resolved: ResolvedModuleClass, temp_var: str) 
     """
     Build the IF condition that detects whether a requested target is out of range.
 
-    Returns None if no range restrictions apply.
+    Returns None if no target-range restrictions apply.
     """
     checks: List[str] = []
     p = resolved.value.var_prefix
@@ -332,7 +339,7 @@ def _build_limit_expr(resolved: ResolvedModuleClass, source_expr: str) -> str:
     """
     Build the LIMIT(...) expression used when applying a new target.
 
-    If there are no target bounds, returns source_expr directly.
+    If there are no target bounds, return source_expr directly.
     """
     if resolved.target is None:
         return source_expr
@@ -349,7 +356,6 @@ def _build_limit_expr(resolved: ResolvedModuleClass, source_expr: str) -> str:
 # ---------------------------------------------------------
 # Header
 # ---------------------------------------------------------
-
 
 def emit_header_comments(resolved: ResolvedModuleClass) -> List[str]:
     """
@@ -404,7 +410,6 @@ def emit_fb_header(resolved: ResolvedModuleClass) -> List[str]:
 # VAR_IN_OUT
 # ---------------------------------------------------------
 
-
 def emit_var_in_out(resolved: ResolvedModuleClass) -> List[str]:
     """
     Emit VAR_IN_OUT block for module-specific variables.
@@ -423,7 +428,6 @@ def emit_var_in_out(resolved: ResolvedModuleClass) -> List[str]:
 # ---------------------------------------------------------
 # VAR
 # ---------------------------------------------------------
-
 
 def emit_var_internal(resolved: ResolvedModuleClass) -> List[str]:
     """
@@ -465,14 +469,13 @@ def emit_var_internal(resolved: ResolvedModuleClass) -> List[str]:
 # Common first block
 # ---------------------------------------------------------
 
-
 def emit_monitor_clients_round_block() -> List[str]:
     """
     Emit the block that monitors the start and end of a client round.
     """
     lines: List[str] = []
 
-    lines.append("// Monitor client round start and finish ")
+    lines.append("// Monitor client round start and finish")
     lines.append("fbRtrigIsFirstClient(CLK:= i_xFirstSecopClient);")
     lines.append("fbRtrigAllClientsDone(CLK:= i_xAllSecopClientsDone);")
     lines.append("")
@@ -483,7 +486,6 @@ def emit_monitor_clients_round_block() -> List[str]:
 # ---------------------------------------------------------
 # Out-of-range block
 # ---------------------------------------------------------
-
 
 def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]:
     lines: List[str] = []
@@ -500,7 +502,7 @@ def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]
     lines.append("//  0 - Monitor value to generate out of range warning/error if configured")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("// Update module status when value goes out of range if module is in IDLE (keep current status otherwise)")
-    lines.append("IF fbRtrigIsFirstClient.Q AND NOT iq_stErrorReport.xActive AND iq_stStatus.etCode= SECOP.ET_StatusCode.Idle THEN ")
+    lines.append("IF fbRtrigIsFirstClient.Q AND NOT iq_stErrorReport.xActive AND iq_stStatus.etCode = SECOP.ET_StatusCode.Idle THEN")
 
     if has_oor:
         lines.append("")
@@ -514,7 +516,7 @@ def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]
         lines.append("  iq_stErrorReport.sClass := 'OutOfRange';")
         lines.append("  iq_stErrorReport.sDescription := 'Sensor or calibration range is between ';")
         lines.append(f"  sMin := {to_string_func}(iq_{value_prefix}ValueMin);")
-        lines.append("  StrConcatA(pstFrom:= ADR(sMin), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription)); ")
+        lines.append("  StrConcatA(pstFrom:= ADR(sMin), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
         lines.append("  StrConcatA(pstFrom:= ADR(' and '), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
         lines.append(f"  sMax := {to_string_func}(iq_{value_prefix}ValueMax);")
         lines.append("  StrConcatA(pstFrom:= ADR(sMax), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
@@ -529,13 +531,12 @@ def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]
         lines.append("  iq_stStatus.etCode := SECOP.ET_StatusCode.Warn;")
         lines.append("  iq_stStatus.sDescription := 'Value read from hardware out of range. Sensor or calibration range is between ';")
         lines.append(f"  sMin := {to_string_func}(iq_{value_prefix}ValueMin);")
-        lines.append("  StrConcatA(pstFrom:= ADR(sMin), pstTo:= ADR(iq_stStatus.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription)); ")
+        lines.append("  StrConcatA(pstFrom:= ADR(sMin), pstTo:= ADR(iq_stStatus.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
         lines.append("  StrConcatA(pstFrom:= ADR(' and '), pstTo:= ADR(iq_stStatus.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
         lines.append(f"  sMax := {to_string_func}(iq_{value_prefix}ValueMax);")
-        lines.append("  StrConcatA(pstFrom:= ADR(sMax), pstTo:= ADR(iq_stStatus.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));  ")
+        lines.append("  StrConcatA(pstFrom:= ADR(sMax), pstTo:= ADR(iq_stStatus.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
 
     lines.append(" END_IF")
-    lines.append(" ")
     lines.append("END_IF")
     lines.append("")
 
@@ -551,7 +552,7 @@ def _emit_enum_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]:
     lines.append("//  0 - Monitor value to generate out of range warning/error if configured")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("// Update module status when value goes out of range if module is in IDLE (keep current status otherwise)")
-    lines.append("IF fbRtrigIsFirstClient.Q AND NOT iq_stErrorReport.xActive AND iq_stStatus.etCode= SECOP.ET_StatusCode.Idle THEN ")
+    lines.append("IF fbRtrigIsFirstClient.Q AND NOT iq_stErrorReport.xActive AND iq_stStatus.etCode = SECOP.ET_StatusCode.Idle THEN")
     lines.append("")
     lines.append(' // Return "OutOfRange" error')
 
@@ -590,7 +591,6 @@ def emit_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]:
 # SYNC block
 # ---------------------------------------------------------
 
-
 def _emit_sync_activate(resolved: ResolvedModuleClass) -> List[str]:
     lines: List[str] = []
 
@@ -599,7 +599,7 @@ def _emit_sync_activate(resolved: ResolvedModuleClass) -> List[str]:
     lines.append("  ")
     lines.append("  // Update subscriber list")
     lines.append("  M_UpdateSubscriberList(i_stClient:= i_stClientMonitored);")
-    lines.append("     ")
+    lines.append("  ")
     lines.append("  // Build reply message. Include all module accessibles")
     lines.extend(_emit_all_parameter_reports("i_sAction", resolved))
     lines.append("  IF i_sModuleRequested = iq_sName THEN M_AddUpdatesEndMessage(i_sAction := i_sAction); END_IF // End message")
@@ -641,25 +641,25 @@ def _emit_numeric_change_target(resolved: ResolvedModuleClass) -> List[str]:
 
     lines.append(f"    IF NOT M_CheckIfDataIsNumeric(i_sDataToParse:= i_sData, i_xMustBeInteger:= {integer_required}) THEN // Unexpected data type")
     lines.append('     A_ReturnErrorWrongType(); // Return "WrongType" error')
-    lines.append("   ")
+    lines.append("    ")
     lines.append("    ELSE")
-    lines.append(f"     {temp_var} := STRING_TO_{resolved.value.plc_type}(i_sData); ")
+    lines.append(f"     {temp_var} := STRING_TO_{resolved.value.plc_type}(i_sData);")
 
     range_cond = _build_target_range_condition(resolved, temp_var)
     if range_cond:
         lines.append(f"     IF {range_cond} THEN // Target out of range")
-        lines.append('       iq_stErrorReport.sClass := \'RangeError\';')
-        lines.append("       iq_stErrorReport.sDescription := 'Value must be between ';")
+        lines.append("      iq_stErrorReport.sClass := 'RangeError';")
+        lines.append("      iq_stErrorReport.sDescription := 'Value must be between ';")
         min_expr = _build_restrictive_min_expr(resolved)
         max_expr = _build_restrictive_max_expr(resolved)
         to_string_func = _to_string_func_for_plc_type(resolved.value.plc_type)
-        lines.append(f"       sMin := {to_string_func}({min_expr});")
-        lines.append("       StrConcatA(pstFrom:= ADR(sMin), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription)); ")
-        lines.append("       StrConcatA(pstFrom:= ADR(' and '), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription)); ")
-        lines.append(f"       sMax := {to_string_func}({max_expr});")
-        lines.append("       StrConcatA(pstFrom:= ADR(sMax), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription)); ")
-        lines.append("       M_ReplyWithErrorStraightAway(i_xErrorLatched:= FALSE);")
-        lines.append("      ")
+        lines.append(f"      sMin := {to_string_func}({min_expr});")
+        lines.append("      StrConcatA(pstFrom:= ADR(sMin), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
+        lines.append("      StrConcatA(pstFrom:= ADR(' and '), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
+        lines.append(f"      sMax := {to_string_func}({max_expr});")
+        lines.append("      StrConcatA(pstFrom:= ADR(sMax), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
+        lines.append("      M_ReplyWithErrorStraightAway(i_xErrorLatched:= FALSE);")
+        lines.append("     ")
         lines.append("     ELSE // Apply new target value")
         limit_expr = _build_limit_expr(resolved, temp_var)
     else:
@@ -693,18 +693,15 @@ def _emit_enum_change_target(resolved: ResolvedModuleClass) -> List[str]:
 
     lines.append("    IF NOT M_CheckIfDataIsNumeric(i_sDataToParse:= i_sData, i_xMustBeInteger:= TRUE) THEN // Unexpected data type")
     lines.append('     A_ReturnErrorWrongType(); // Return "WrongType" error')
-    lines.append("   ")
+    lines.append("    ")
     lines.append("    ELSE")
     lines.append("     iTargetNewVal := STRING_TO_INT(i_sData);")
     lines.append("")
 
     members = list(resolved.value.members.items()) if resolved.value.members else []
 
-    # Invalid enum variant IF
     if members:
-        conds = []
-        for name, _value in members:
-            conds.append(f"iTargetNewVal <> ET_Module_{resolved.name}_value.{name}")
+        conds = [f"iTargetNewVal <> ET_Module_{resolved.name}_value.{name}" for name, _value in members]
         joined = " \n      AND ".join(conds)
         lines.append(f"     IF ({joined}) THEN // Target out of range")
     else:
@@ -754,7 +751,7 @@ def _emit_sync_change(resolved: ResolvedModuleClass) -> List[str]:
         lines.append("  // target")
         lines.append("  IF i_sAccessible = 'target' THEN")
         lines.append("   ")
-        lines.append('   A_CheckTargetChangeInterlocks(); // Check target change interlocks. Return error if there is :"Impossible", "Disabled", "IsError". "BadJSON"...')
+        lines.append('   A_CheckTargetChangeInterlocks(); // Check target change interlocks. Return error if there is: "Impossible", "Disabled", "IsError", "BadJSON"...')
         lines.append("   ")
         lines.append("   IF xTargetChangeInterlock THEN // Target change interlocks healthy")
 
@@ -832,7 +829,7 @@ def _emit_sync_do(resolved: ResolvedModuleClass) -> List[str]:
     lines: List[str] = []
 
     lines.append("")
-    lines.append(" // Execute command: do <module>:<command> <value> (where <value> is the argument which is optional)")
+    lines.append(" // Execute command: do <module>:<command> <value> (where <value> is optional)")
     lines.append(" ELSIF i_sAction = 'do' THEN")
 
     first_branch_started = False
@@ -842,22 +839,22 @@ def _emit_sync_do(resolved: ResolvedModuleClass) -> List[str]:
         lines.append("  // stop")
         lines.append("  IF i_sAccessible = 'stop' THEN")
         lines.append("   ")
-        lines.append('   A_CheckTargetChangeInterlocks(); // Check target change interlocks. Return error if there is :"Impossible", "Disabled", "IsError". "BadJSON"...')
+        lines.append('   A_CheckTargetChangeInterlocks(); // Check target change interlocks. Return error if there is: "Impossible", "Disabled", "IsError", "BadJSON"...')
         lines.append("   ")
         lines.append("   IF xTargetChangeInterlock THEN // Target change interlocks healthy")
-        lines.append("        ")
-        lines.append("    IF iq_stTargetDrive.uiState=0 OR iq_stTargetDrive.uiState>=4 THEN // No target change is underway")
+        lines.append("    ")
+        lines.append("    IF iq_stTargetDrive.uiState = 0 OR iq_stTargetDrive.uiState >= 4 THEN // No target change is underway")
         lines.append("     ; // Ignore request")
-        lines.append("     ")
+        lines.append("    ")
         lines.append("    ELSIF iq_stTargetDrive.xStopCmd THEN // A stop command is already ongoing")
-        lines.append("     ; // Ignore request ")
-        lines.append("     ")
+        lines.append("     ; // Ignore request")
+        lines.append("    ")
         lines.append("    ELSE // Execute stop command (target updated to current process value). Register client that made request. Initiates target drive state machine")
         lines.append("     iq_stTargetDrive.xStopCmd := TRUE;")
         lines.extend(_emit_stop_apply_new_target(resolved))
         lines.append("     iq_stTargetDrive.stStopCmdClient.sIp := i_stClientMonitored.sIp;")
         lines.append("     iq_stTargetDrive.stStopCmdClient.uiPort := i_stClientMonitored.uiPort;")
-        lines.append("     iq_stTargetDrive.uiState := 1; ")
+        lines.append("     iq_stTargetDrive.uiState := 1;")
         lines.append("    END_IF")
         lines.append("   END_IF")
         first_branch_started = True
@@ -866,15 +863,17 @@ def _emit_sync_do(resolved: ResolvedModuleClass) -> List[str]:
         keyword = "  ELSIF" if first_branch_started else "  IF"
         lines.append("  ")
         lines.append("  // clear_errors")
-        lines.append(f"{keyword} i_sAccessible='clear_errors' THEN")
+        lines.append(f"{keyword} i_sAccessible = 'clear_errors' THEN")
         lines.append("   iq_xClearErrors := TRUE; // Apply command")
         lines.append("   M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction:= i_sAction, i_sAccessible:= i_sAccessible, i_sDataReport:= 'null'); // Prepare reply message: done <module>:<command> <data-report>")
         first_branch_started = True
 
     for cc in resolved.custom_commands:
         keyword = "  ELSIF" if first_branch_started else "  IF"
-        lines.append(f"{keyword} i_sAccessible='{cc.secop_name}' THEN")
-        lines.append(f"   // TODO_CODEGEN: manual implementation required for command '{cc.secop_name}'")
+        lines.append(f"{keyword} i_sAccessible = '{cc.secop_name}' THEN")
+        lines.append(f"   iq_{cc.plc_var_name} := TRUE; // Apply customised command")
+        lines.append(f"   // TODO_CODEGEN: implement customised command behaviour for '{cc.secop_name}'")
+        lines.append("   M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction:= i_sAction, i_sAccessible:= i_sAccessible, i_sDataReport:= 'null');")
         first_branch_started = True
 
     lines.append("  ELSE")
@@ -902,7 +901,7 @@ def emit_sync_block(resolved: ResolvedModuleClass) -> List[str]:
 
     lines.append("// 1 - Sync mode. Process client request")
     lines.append("// ----------------------------------------------------------------------------")
-    lines.append("IF i_xSyncModeRequest AND (i_sModuleRequested=iq_sName OR (StrIsNullOrEmptyA(ADR(i_sModuleRequested)) AND (i_sAction='activate' OR i_sAction='deactivate'))) THEN")
+    lines.append("IF i_xSyncModeRequest AND (i_sModuleRequested = iq_sName OR (StrIsNullOrEmptyA(ADR(i_sModuleRequested)) AND (i_sAction = 'activate' OR i_sAction = 'deactivate'))) THEN")
     lines.append(" ")
 
     lines.extend(_emit_sync_activate(resolved))
@@ -915,6 +914,7 @@ def emit_sync_block(resolved: ResolvedModuleClass) -> List[str]:
     lines.append("")
 
     return lines
+
 
 def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> List[str]:
     """
@@ -949,8 +949,8 @@ def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> Lis
     lines.append("  M_CheckIfClientIsSubscribed(i_stClient:= i_stClientMonitored);")
     lines.append("  M_CheckIfClientChangedTarget(i_stClient:= i_stClientMonitored);")
     lines.append("  IF xClientIsSubscribed OR xClientChangedTarget")
-    lines.append("   OR (i_stClientMonitored.sIp<>'' AND iq_stTargetDrive.stStopCmdClient.sIp = i_stClientMonitored.sIp")
-    lines.append("    AND i_stClientMonitored.uiPort>0 AND iq_stTargetDrive.stStopCmdClient.uiPort = i_stClientMonitored.uiPort) THEN")
+    lines.append("   OR (i_stClientMonitored.sIp <> '' AND iq_stTargetDrive.stStopCmdClient.sIp = i_stClientMonitored.sIp")
+    lines.append("    AND i_stClientMonitored.uiPort > 0 AND iq_stTargetDrive.stStopCmdClient.uiPort = i_stClientMonitored.uiPort) THEN")
     lines.append("    ")
     lines.append("    // Send update messages")
     lines.append("    A_GenerateStatusDataReport();")
@@ -984,8 +984,8 @@ def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> Lis
     lines.append("  M_CheckIfClientIsSubscribed(i_stClient:= i_stClientMonitored);")
     lines.append("  M_CheckIfClientChangedTarget(i_stClient:= i_stClientMonitored);")
     lines.append("  IF xClientIsSubscribed OR xClientChangedTarget")
-    lines.append("   OR (i_stClientMonitored.sIp<>'' AND iq_stTargetDrive.stStopCmdClient.sIp = i_stClientMonitored.sIp")
-    lines.append("    AND i_stClientMonitored.uiPort>0 AND iq_stTargetDrive.stStopCmdClient.uiPort = i_stClientMonitored.uiPort) THEN")
+    lines.append("   OR (i_stClientMonitored.sIp <> '' AND iq_stTargetDrive.stStopCmdClient.sIp = i_stClientMonitored.sIp")
+    lines.append("    AND i_stClientMonitored.uiPort > 0 AND iq_stTargetDrive.stStopCmdClient.uiPort = i_stClientMonitored.uiPort) THEN")
     lines.append("   ")
     lines.append("   // Return module status")
     lines.append("   A_GenerateStatusDataReport();")
@@ -1049,19 +1049,18 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass) -> List[str]:
     lines.append("  // Update subscribers on all module parameters when new updates are due (poll interval done)")
     lines.append("  IF xPollIntervalDone THEN")
 
-    # status/value/target/custom/pollinterval using action='update'
     lines.extend(_indent(_emit_all_parameter_reports("'update'", resolved), 2))
 
     lines.append("  ELSE")
     lines.append("   // Update subscribers when changing the polling interval")
-    lines.append("   IF xPollIntervalChanged AND NOT (iq_stPollInterval.stPollintervalChangeClient.sIp=i_stClientMonitored.sIp AND iq_stPollInterval.stPollintervalChangeClient.uiPort=i_stClientMonitored.uiPort) THEN")
+    lines.append("   IF xPollIntervalChanged AND NOT (iq_stPollInterval.stPollintervalChangeClient.sIp = i_stClientMonitored.sIp AND iq_stPollInterval.stPollintervalChangeClient.uiPort = i_stClientMonitored.uiPort) THEN")
     lines.append("    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'update', i_sAccessible := 'pollinterval', i_sDataReport:= LREAL_TO_STRING(iq_stPollInterval.lrValue)); // Poll interval")
     lines.append("   END_IF")
 
     if resolved.interface_class == "Writable":
         target_expr = f"iq_{resolved.value.var_prefix}Target"
         lines.append("   // Update subscribers when changing the target")
-        lines.append("   IF xTargetChanged AND NOT (iq_stTargetWrite.stTargetChangeClient.sIp=i_stClientMonitored.sIp AND iq_stTargetWrite.stTargetChangeClient.uiPort=i_stClientMonitored.uiPort) THEN")
+        lines.append("   IF xTargetChanged AND NOT (iq_stTargetWrite.stTargetChangeClient.sIp = i_stClientMonitored.sIp AND iq_stTargetWrite.stTargetChangeClient.uiPort = i_stClientMonitored.uiPort) THEN")
         lines.append(
             f"    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'update', i_sAccessible := 'target', i_sDataReport:= {_value_to_string_expr(resolved, target_expr)}); // Target"
         )
@@ -1102,7 +1101,7 @@ def emit_async_block(resolved: ResolvedModuleClass) -> List[str]:
     - target drive state machine
     - handle updates
 
-    For Readable/Writable:
+    For Readable / Writable:
     - handle updates only
     """
     lines: List[str] = []
@@ -1123,7 +1122,7 @@ def emit_target_drive_monitor_block(resolved: ResolvedModuleClass) -> List[str]:
     """
     Emit the final block that monitors target driving and updates status when done.
 
-    Only applies to Drivable modules.
+    Only applies to Drivable modules with numeric or enum value.
 
     Rules:
     - numeric double -> lr
@@ -1154,17 +1153,17 @@ def emit_target_drive_monitor_block(resolved: ResolvedModuleClass) -> List[str]:
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("")
     lines.append("// Monitor process value and target value. Set q_xSpReached to TRUE if target is reached on time. Set q_xSpFail to TRUE otherwise")
-    lines.append("fbTargetDriveMonitor(i_xEnable:= iq_stTargetDrive.uiState=3, ")
-    lines.append(f"      i_{mon_prefix}Pv:= {pv_expr}, ")
-    lines.append(f"      i_{mon_prefix}Sp:= {sp_expr}, ")
-    lines.append(f"      i_{mon_prefix}Tolerance:= {tol_expr}, ")
-    lines.append("      i_timTimeout:= iq_stTargetDrive.timTimeout, ")
-    lines.append("      q_xSpReached=> , ")
+    lines.append("fbTargetDriveMonitor(i_xEnable:= iq_stTargetDrive.uiState = 3,")
+    lines.append(f"      i_{mon_prefix}Pv:= {pv_expr},")
+    lines.append(f"      i_{mon_prefix}Sp:= {sp_expr},")
+    lines.append(f"      i_{mon_prefix}Tolerance:= {tol_expr},")
+    lines.append("      i_timTimeout:= iq_stTargetDrive.timTimeout,")
+    lines.append("      q_xSpReached=> ,")
     lines.append("      q_xSpFail=> );")
     lines.append("")
     lines.append('// Set module status to Idle if target is reached on time. Generate a "TimeoutError" error otherwise')
     lines.append("M_UpdateStatusWhenDriveDone(i_xDone:= fbTargetDriveMonitor.q_xDone AND fbRtrigAllClientsDone.Q,")
-    lines.append("       i_xSpReached:= fbTargetDriveMonitor.q_xSpReached, ")
+    lines.append("       i_xSpReached:= fbTargetDriveMonitor.q_xSpReached,")
     lines.append("       i_xTimeOutElapsed:= fbTargetDriveMonitor.q_xSpFail);")
     lines.append("")
 

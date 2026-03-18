@@ -36,10 +36,10 @@ def emit_fb_module(resolved: ResolvedModuleClass) -> str:
     """
     lines: list[str] = []
 
-    lines.extend(emit_header_comments(resolved))
     lines.extend(emit_fb_header(resolved))
     lines.extend(emit_var_in_out(resolved))
     lines.extend(emit_var_internal(resolved))
+    lines.extend(emit_header_comments(resolved))
 
     # Common first blocks
     lines.extend(emit_monitor_clients_round_block())

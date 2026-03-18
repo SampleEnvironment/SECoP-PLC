@@ -1,39 +1,39 @@
 """
 Resolve module classes for PLC code generation.
 
-This module performs the "semantic resolution" step between:
-- normalized SECoP config (plain dict / Pydantic output)
+This module performs the semantic resolution step between:
+- normalized SECoP config (plain dict / Pydantic output),
 and
-- ST / PLCopenXML generators
+- code generators (Structured Text now, PLCopenXML later).
 
-Main responsibilities:
-1) Group equal modules into one "module class"
-   Example:
-       tc1 + tc2 -> module class "tc"
-2) Resolve PLC-relevant information for each module class:
+Main responsibilities
+---------------------
+1) group equal real modules into one module class
+2) resolve PLC-relevant information for each module class:
    - interface class
    - value PLC type
    - enum members (if value is enum)
    - target capabilities
    - clear_errors existence
    - custom parameters
-   - final list of module-specific PLC variables
-3) Return a clean resolved model that generators can consume without
-   re-parsing the original JSON structure.
+   - custom commands
+   - final ordered list of module-specific PLC variables
+3) return a clean resolved model that generators can consume without
+   re-parsing the original JSON structure
 
-Important design principle:
-- Parsing / checks / decisions happen here once.
-- Generators should not re-implement this logic.
+Important design principle
+--------------------------
+Parsing, interpretation and design decisions happen here once.
+Emitters should not re-implement this logic.
 
-Current supported value types:
+Current supported value/custom-parameter types
+----------------------------------------------
 - double
 - int
 - string
 - enum
 
-Future extensions:
-- array
-- other SECoP datainfo types if needed later
+Future extensions may add further SECoP datatypes.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from typing import Any, Dict, Optional, Tuple, List
 import copy
 
 from codegen.resolve.types import (
+    ResolvedCustomCommand,
     ResolvedCustomParameter,
     ResolvedModuleClass,
     ResolvedModuleClasses,
@@ -57,52 +58,65 @@ from codegen.utils.codesys_naming import (
     secop_type_to_iec,
 )
 
+
 # ---------------------------------------------------------------------------
-# Grouping helpers reused from previous IR layer
+# Grouping helpers
 # ---------------------------------------------------------------------------
 
 """
-1) Group modules into "module classes" when their SECoP structure is identical.
-2) Ignore x-plc entirely EXCEPT x-plc.value.outofrange_min/max (these affect class equality).
+Grouping policy
+---------------
+1) Group real modules into module classes when their SECoP structure is equal.
+2) Ignore x-plc entirely EXCEPT x-plc.value.outofrange_min/max, because those
+   fields affect the generated class-level variable set.
 3) Pick a deterministic module-class name:
    - if class has one module => class name is module name
-   - if class has multiple modules => use common name heuristic, fallback to moduleclassN
+   - if class has multiple modules => use the common-name heuristic, otherwise
+     fallback to moduleclassN
 
-Example grouping:
-    modules: tc1, tc2 (identical) -> class name "tc"
-    modules: mf (unique) -> class name "mf"
+Signature rule
+--------------
+- remove the whole 'x-plc' block,
+- but include x-plc.value.outofrange_min/max under a synthetic key
+  '__xplc_outofrange__'
 
-Signature rule:
-- remove 'x-plc' completely
-- but include outofrange config under synthetic key "__xplc_outofrange__"
-So if module A has outofrange and module B does not, they won't group.
+This ensures that modules differing only in x-plc out-of-range configuration do
+not collapse into the same module class.
 """
+
 
 @dataclass(frozen=True)
 class ModuleClassInfo:
-    """Information about a module class derived from grouping."""
+    """
+    Lightweight information derived from grouping before full resolution.
+    """
     modclass: str
-    interface_class: str  # "Readable" | "Writable" | "Drivable"
-    # you can extend this later (value type, etc.) but not needed yet
+    interface_class: str
 
 
 def _get_interface_class(module_dict: Dict[str, Any]) -> str:
     """
-    Decide module interface class from normalized config.
+    Extract and validate the module interface class from normalized config.
 
-    In your normalized config: "interface_classes": ["Drivable"] etc.
-    We assume there is exactly one, which matches your examples.
+    Expected shape:
+        "interface_classes": ["Readable"]
+        "interface_classes": ["Writable"]
+        "interface_classes": ["Drivable"]
 
-    Raises ValueError if missing/invalid.
+    This remains strict because the rest of the code generator depends on the
+    simplified one-class-per-module policy.
     """
-    ic = module_dict.get("interface_classes")
-    if not ic or not isinstance(ic, list):
-        raise ValueError("module.interface_classes missing or invalid")
-    if len(ic) != 1:
-        raise ValueError(f"Expected exactly 1 interface class, got: {ic}")
-    if ic[0] not in ("Readable", "Writable", "Drivable"):
-        raise ValueError(f"Unknown interface class: {ic[0]}")
-    return ic[0]
+    interface_classes = module_dict.get("interface_classes")
+    if not isinstance(interface_classes, list) or len(interface_classes) != 1:
+        raise ValueError(
+            f"Expected exactly one interface class, got: {interface_classes}"
+        )
+
+    ic = interface_classes[0]
+    if ic not in ("Readable", "Writable", "Drivable"):
+        raise ValueError(f"Unsupported interface class: {ic}")
+
+    return ic
 
 
 def module_signature(module_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -110,16 +124,15 @@ def module_signature(module_dict: Dict[str, Any]) -> Dict[str, Any]:
     Create the module signature used to decide class equality.
 
     Rules:
-    - deep-copy module
+    - deep-copy the module dict
     - remove full 'x-plc'
     - include only x-plc.value.outofrange_min/max under synthetic key
-      '__xplc_outofrange__'
+      '__xplc_outofrange__' if both are configured
 
     This makes equality checks explicit and easy to reason about.
     """
     m = copy.deepcopy(module_dict)
 
-    # Extract outofrange (if any)
     out = None
     xplc = m.get("x-plc")
     if isinstance(xplc, dict):
@@ -127,11 +140,9 @@ def module_signature(module_dict: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(v, dict):
             omin = v.get("outofrange_min")
             omax = v.get("outofrange_max")
-            # include only if BOTH exist (min/max). If one is None it still counts as "not configured".
             if omin is not None and omax is not None:
                 out = {"outofrange_min": omin, "outofrange_max": omax}
 
-    # Remove full x-plc from signature
     if "x-plc" in m:
         del m["x-plc"]
 
@@ -158,17 +169,17 @@ def _longest_common_suffix(a: str, b: str) -> str:
 
 def _common_name_heuristic(names: List[str]) -> Optional[str]:
     """
-    Heuristic requested by user.
+    Heuristic for naming a shared module class.
 
     Examples:
-      tempabcdef1x + temp567 -> "temp" (common prefix)
+      tempabcdef1x + temp567 -> "temp"  (common prefix)
       abcdef1x + tempdef1x   -> "def1x" (common suffix)
-      abc + temp             -> None (fallback to moduleclassN)
+      abc + temp             -> None    (fallback to moduleclassN)
 
-    Implementation:
-    - if common prefix len >= 2 -> use it
-    - else if common suffix len >= 2 -> use it
-    - else None
+    Policy:
+    - if common prefix length >= 2 -> use it
+    - else if common suffix length >= 2 -> use it
+    - else return None
     """
     if not names:
         return None
@@ -191,9 +202,11 @@ def _common_name_heuristic(names: List[str]) -> Optional[str]:
     return None
 
 
-def group_modules_into_classes(modules: Dict[str, Dict[str, Any]]) -> Tuple[Dict[str, str], Dict[str, ModuleClassInfo]]:
+def group_modules_into_classes(
+    modules: Dict[str, Dict[str, Any]]
+) -> Tuple[Dict[str, str], Dict[str, ModuleClassInfo]]:
     """
-    Group modules into module classes.
+    Group real modules into module classes.
 
     Returns:
         module_to_class: dict[module_name] = modclass_name
@@ -201,16 +214,13 @@ def group_modules_into_classes(modules: Dict[str, Dict[str, Any]]) -> Tuple[Dict
 
     Steps:
     1) build signatures
-    2) group by deep-equality of signature
-    3) name each group:
-       - if size==1 => name is module name
-       - else => common heuristic, else moduleclassN
-    4) ensure uniqueness of modclass names
+    2) group by deep equality of signature
+    3) name each group
+    4) ensure uniqueness of generated class names
 
-    Deterministic:
-    - process modules in sorted order
+    Determinism:
+    - modules are processed in sorted order for grouping
     """
-    # Build groups: list of (signature, [module_names])
     groups: list[tuple[dict[str, Any], list[str]]] = []
 
     for modname in sorted(modules.keys()):
@@ -226,7 +236,6 @@ def group_modules_into_classes(modules: Dict[str, Dict[str, Any]]) -> Tuple[Dict
         if not matched:
             groups.append((sig, [modname]))
 
-    # Name groups
     used_names: set[str] = set()
     module_to_class: dict[str, str] = {}
     classes: dict[str, ModuleClassInfo] = {}
@@ -244,7 +253,6 @@ def group_modules_into_classes(modules: Dict[str, Dict[str, Any]]) -> Tuple[Dict
                 base_name = f"moduleclass{moduleclass_counter}"
                 moduleclass_counter += 1
 
-        # enforce uniqueness
         modclass = base_name
         suffix = 2
         while modclass in used_names:
@@ -253,16 +261,14 @@ def group_modules_into_classes(modules: Dict[str, Dict[str, Any]]) -> Tuple[Dict
 
         used_names.add(modclass)
 
-        # interface class comes from any module in the group (they are identical by signature,
-        # so interface_classes must match; if it does not, rules should have caught it earlier).
         ic = _get_interface_class(modules[names[0]])
-
         classes[modclass] = ModuleClassInfo(modclass=modclass, interface_class=ic)
 
         for n in names:
             module_to_class[n] = modclass
 
     return module_to_class, classes
+
 
 # ---------------------------------------------------------------------------
 # Small helpers to read normalized config safely
@@ -271,9 +277,6 @@ def group_modules_into_classes(modules: Dict[str, Dict[str, Any]]) -> Tuple[Dict
 def _get_accessible(module: Dict[str, Any], name: str) -> Optional[Dict[str, Any]]:
     """
     Return accessibles.<name> if it exists and is a dict, else None.
-
-    Example:
-        module["accessibles"]["value"] -> {...}
     """
     acc = module.get("accessibles") or {}
     value = acc.get(name)
@@ -286,31 +289,6 @@ def _get_datainfo(accessible: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     di = accessible.get("datainfo")
     return di if isinstance(di, dict) else None
-
-
-def _get_interface_class(module: Dict[str, Any]) -> str:
-    """
-    Extract the module interface class from normalized config.
-
-    Expected shape:
-        "interface_classes": ["Readable"] / ["Writable"] / ["Drivable"]
-
-    We keep this strict because the rest of the code generator relies on it.
-
-    Raises:
-        ValueError if the config is malformed.
-    """
-    interface_classes = module.get("interface_classes")
-    if not isinstance(interface_classes, list) or len(interface_classes) != 1:
-        raise ValueError(
-            f"Expected exactly one interface class, got: {interface_classes}"
-        )
-
-    ic = interface_classes[0]
-    if ic not in ("Readable", "Writable", "Drivable"):
-        raise ValueError(f"Unsupported interface class: {ic}")
-
-    return ic
 
 
 def _is_writable(interface_class: str) -> bool:
@@ -335,25 +313,19 @@ def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
     """
     Resolve the PLC-oriented representation of accessibles.value.
 
-    Rules:
-    - double -> LREAL / lr
-    - int    -> DINT / di
-    - string -> STRING(n) / s
-    - enum   -> ET_Module_<modclass>_value / et
-
-    Flags:
-    - has_min_max:
-        * True/False for numeric values
-        * None for non-numeric values
-    - has_out_of_range:
-        * True/False for numeric values
-        * None for non-numeric values
-    - members:
-        * dict for enum values
-        * None otherwise
-
-    Raises:
-        ValueError if value is missing or unsupported.
+    Structural tri-state policy:
+    - numeric values:
+        has_min_max:
+            True  if min/max configured
+            False if concept applies but min/max missing
+            None  never used here
+        has_out_of_range:
+            True  if x-plc out-of-range configured
+            False if concept applies but fields missing
+            None  never used here
+    - string / enum values:
+        has_min_max = None
+        has_out_of_range = None
     """
     acc_value = _get_accessible(module, "value")
     if not acc_value:
@@ -367,14 +339,11 @@ def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
     if not secop_type:
         raise ValueError("accessibles.value.datainfo.type is missing")
 
-    # -------------------------
     # Numeric values
-    # -------------------------
     if secop_type in ("double", "int"):
         iec_type = secop_type_to_iec(secop_type, maxchars=None)
         var_prefix = prefix_for_scalar_type(iec_type)
 
-        # In numeric values these flags conceptually apply, so we use True/False (not None).
         has_min_max = (di.get("min") is not None and di.get("max") is not None)
 
         xplc = module.get("x-plc") or {}
@@ -398,9 +367,7 @@ def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
             members=None,
         )
 
-    # -------------------------
     # String values
-    # -------------------------
     if secop_type == "string":
         maxchars = di.get("maxchars")
         if maxchars is None:
@@ -417,15 +384,12 @@ def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
             members=None,
         )
 
-    # -------------------------
     # Enum values
-    # -------------------------
     if secop_type == "enum":
         members = di.get("members")
         if not isinstance(members, dict) or not members:
             raise ValueError("ENUM value requires datainfo.members dict")
 
-        # Keep enum member names exactly as they appear in JSON.
         enum_members = {str(k): int(v) for k, v in members.items()}
 
         return ResolvedValue(
@@ -439,31 +403,39 @@ def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
             members=enum_members,
         )
 
-    # -------------------------
-    # Future types
-    # -------------------------
     if secop_type == "array":
         raise ValueError(
             "SECoP array values are not resolved yet in module_classes.py"
         )
 
-    raise ValueError(f"Unsupported value.datainfo.type for code generation: {secop_type}")
+    raise ValueError(
+        f"Unsupported value.datainfo.type for code generation: {secop_type}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Resolve target block
 # ---------------------------------------------------------------------------
 
-def _resolve_target(interface_class: str, value: ResolvedValue, module: Dict[str, Any]) -> Optional[ResolvedTarget]:
+def _resolve_target(
+    interface_class: str,
+    value: ResolvedValue,
+    module: Dict[str, Any]
+) -> Optional[ResolvedTarget]:
     """
-    Resolve target-related behaviour.
+    Resolve target-related structural behaviour.
 
-    Rules:
-    - Readable modules do not have target -> return None
-    - Writable / Drivable modules have target -> resolve flags
-    - has_drive_tolerance is True only for Drivable modules with numeric value type
-
-    We intentionally do not repeat PLC type here because target uses the same PLC type as value.
+    Tri-state policy:
+    - numeric target min/max:
+        True  -> applies and configured
+        False -> applies but not configured
+        None  -> does not apply conceptually
+    - target_limits:
+        same policy
+    - drive tolerance:
+        True  -> Drivable numeric target and configured
+        False -> Drivable numeric target but not configured
+        None  -> does not apply conceptually
     """
     if not _is_writable(interface_class):
         return None
@@ -481,27 +453,18 @@ def _resolve_target(interface_class: str, value: ResolvedValue, module: Dict[str
     target_secop_type = (di_target.get("type") or "").lower()
     value_plc_type = value.plc_type
 
-    # We want target to follow value type semantically.
-    # Example:
-    #   if value is LREAL, target should also come from SECoP 'double'
-    #
-    # We do not overcomplicate this yet. We do a simple consistency check for supported types.
     if value.is_enum and target_secop_type != "enum":
         raise ValueError("Target type must match enum value type")
+
     if value.is_numeric:
         expected = "double" if value_plc_type == "LREAL" else "int"
         if target_secop_type != expected:
             raise ValueError("Target type must match numeric value type")
-    if (not value.is_enum) and (not value.is_numeric) and value_plc_type.startswith("STRING("):
+
+    if value.is_string:
         if target_secop_type != "string":
             raise ValueError("Target type must match string value type")
 
-    has_min_max: Optional[bool]
-    has_limits: Optional[bool]
-
-    # Target exists, so these fields conceptually apply.
-    # For numeric targets: True/False makes sense.
-    # For enum/string: min/max and limits do not conceptually apply -> None.
     if value.is_numeric:
         has_min_max = (
             di_target.get("min") is not None and di_target.get("max") is not None
@@ -517,16 +480,19 @@ def _resolve_target(interface_class: str, value: ResolvedValue, module: Dict[str
                 di_tl.get("min") is not None and di_tl.get("max") is not None
             )
         else:
+            # conceptually applicable for numeric targets, but not configured
             has_limits = False
-
     else:
         has_min_max = None
         has_limits = None
 
-    # Drive tolerance only conceptually applies to Drivable modules with numeric values.
-    # In all other cases we use None (not applicable), not False.
     if _is_drivable(interface_class) and value.is_numeric:
-        has_drive_tolerance: Optional[bool] = True
+        xplc = module.get("x-plc") or {}
+        xplc_target = xplc.get("target") if isinstance(xplc, dict) else None
+        if isinstance(xplc_target, dict):
+            has_drive_tolerance = xplc_target.get("reach_abs_tolerance") is not None
+        else:
+            has_drive_tolerance = False
     else:
         has_drive_tolerance = None
 
@@ -538,24 +504,38 @@ def _resolve_target(interface_class: str, value: ResolvedValue, module: Dict[str
 
 
 # ---------------------------------------------------------------------------
-# Resolve clear_errors + custom parameters
+# Resolve clear_errors + custom parameters + custom commands
 # ---------------------------------------------------------------------------
 
 def _resolve_has_clear_errors_command(module: Dict[str, Any]) -> bool:
     """
-    A module has clear_errors support if accessibles.clear_errors exists in config.
+    A module has clear_errors support if accessibles.clear_errors exists.
 
-    We do NOT care here whether x-plc.clear_errors.cmd_stmt is empty or not.
-    That is an implementation detail handled elsewhere (warning/tasklist/default logic).
+    This function only resolves existence of the standard SECoP command, not the
+    completeness of x-plc.clear_errors.
     """
     return _get_accessible(module, "clear_errors") is not None
 
 
-def _resolve_custom_parameters(module: Dict[str, Any]) -> list[ResolvedCustomParameter]:
+def _custom_enum_type_name(modclass: str, secop_name: str) -> str:
     """
-    Resolve all custom parameters (SECoP names starting with '_').
+    Build the enum DUT name for a customised parameter of enum type.
 
-    Current supported custom parameter types:
+    Example:
+        modclass='tc', secop_name='_sensor'
+        -> ET_Module_tc__sensor
+    """
+    return f"ET_Module_{modclass}_{secop_name}"
+
+
+def _resolve_custom_parameters(
+    modclass: str,
+    module: Dict[str, Any]
+) -> list[ResolvedCustomParameter]:
+    """
+    Resolve all customised parameters (SECoP names starting with '_').
+
+    Supported current custom-parameter types:
     - string
     - double
     - int
@@ -580,6 +560,9 @@ def _resolve_custom_parameters(module: Dict[str, Any]) -> list[ResolvedCustomPar
         secop_type = (di.get("type") or "").lower()
         if not secop_type:
             raise ValueError(f"Custom parameter {acc_name} is missing datainfo.type")
+
+        if secop_type == "command":
+            continue
 
         description = str(acc.get("description") or "")
 
@@ -608,6 +591,7 @@ def _resolve_custom_parameters(module: Dict[str, Any]) -> list[ResolvedCustomPar
         if secop_type in ("double", "int"):
             iec_type = secop_type_to_iec(secop_type, maxchars=None)
             var_prefix = prefix_for_scalar_type(iec_type)
+
             stem = acc_name[1:]
             if not stem:
                 raise ValueError("Custom parameter name cannot be just '_'")
@@ -634,6 +618,7 @@ def _resolve_custom_parameters(module: Dict[str, Any]) -> list[ResolvedCustomPar
                 raise ValueError(f"Custom enum parameter {acc_name} requires members")
 
             enum_members = {str(k): int(v) for k, v in members.items()}
+
             stem = acc_name[1:]
             if not stem:
                 raise ValueError("Custom parameter name cannot be just '_'")
@@ -644,7 +629,7 @@ def _resolve_custom_parameters(module: Dict[str, Any]) -> list[ResolvedCustomPar
                     secop_name=acc_name,
                     description=description,
                     plc_var_name=f"et_{nice}",
-                    plc_type=f"ET_ModuleCustom_{nice}",
+                    plc_type=_custom_enum_type_name(modclass, acc_name),
                     var_prefix="et",
                     is_numeric=False,
                     is_enum=True,
@@ -663,13 +648,13 @@ def _resolve_custom_parameters(module: Dict[str, Any]) -> list[ResolvedCustomPar
 
 def _resolve_custom_commands(module: Dict[str, Any]) -> list[ResolvedCustomCommand]:
     """
-    Resolve custom commands other than 'stop' and 'clear_errors'.
+    Resolve customised commands other than the standard stop and clear_errors.
 
-    These commands are allowed, but automatic implementation is not provided yet.
-    We still resolve them so that:
-    - TYPES can declare x_<Command>
-    - FBs can expose them
-    - future tasklist can reference them
+    These commands are allowed, but automatic implementation is not generated
+    yet. We still resolve them so that:
+    - ST types can declare the corresponding PLC variables
+    - FB interfaces can expose them
+    - later TODO/task-list generation can reference them
     """
     result: list[ResolvedCustomCommand] = []
 
@@ -678,7 +663,7 @@ def _resolve_custom_commands(module: Dict[str, Any]) -> list[ResolvedCustomComma
         return result
 
     for acc_name, acc in accessibles.items():
-        if acc_name in ("stop", "clear_errors"):
+        if not isinstance(acc_name, str) or not acc_name.startswith("_"):
             continue
         if not isinstance(acc, dict):
             continue
@@ -690,7 +675,12 @@ def _resolve_custom_commands(module: Dict[str, Any]) -> list[ResolvedCustomComma
         if (di.get("type") or "").lower() != "command":
             continue
 
-        nice = acc_name[:1].upper() + acc_name[1:]
+        stem = acc_name[1:]
+        if not stem:
+            raise ValueError("Custom command name cannot be just '_'")
+
+        nice = stem[:1].upper() + stem[1:]
+
         result.append(
             ResolvedCustomCommand(
                 secop_name=acc_name,
@@ -702,13 +692,12 @@ def _resolve_custom_commands(module: Dict[str, Any]) -> list[ResolvedCustomComma
     return result
 
 
-
 def _resolve_pollinterval_changeable(module: Dict[str, Any]) -> bool:
     """
     Resolve whether pollinterval is changeable.
 
-    Rule:
-    - pollinterval exists on all your current modules
+    Current project policy:
+    - pollinterval exists on current modules
     - it is changeable when readonly == False
     """
     acc = _get_accessible(module, "pollinterval")
@@ -718,7 +707,7 @@ def _resolve_pollinterval_changeable(module: Dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Build the final list of module-specific variables
+# Build final module-specific PLC variables
 # ---------------------------------------------------------------------------
 
 def _build_module_variables(
@@ -730,7 +719,8 @@ def _build_module_variables(
     custom_commands: list[ResolvedCustomCommand],
 ) -> list[ResolvedModuleVariable]:
     """
-    Build the final ordered list of module-specific PLC variables for one module class.
+    Build the final ordered list of module-specific PLC variables for one module
+    class.
 
     Order policy:
     - value block first
@@ -824,7 +814,6 @@ def _build_module_variables(
                 )
             )
 
-        # Only Drivable modules need TargetChangeNewVal
         if interface_class == "Drivable":
             vars_out.append(
                 ResolvedModuleVariable(
@@ -843,7 +832,7 @@ def _build_module_variables(
                 )
             )
 
-    # Clear errors command
+    # Standard clear_errors command
     if has_clear_errors_command:
         vars_out.append(
             ResolvedModuleVariable(
@@ -880,21 +869,29 @@ def _build_module_variables(
 # Resolve one module class
 # ---------------------------------------------------------------------------
 
-def _resolve_one_module_class(modclass: str, module: Dict[str, Any]) -> ResolvedModuleClass:
+def _resolve_one_module_class(
+    modclass: str,
+    module: Dict[str, Any]
+) -> ResolvedModuleClass:
     """
-    Resolve one module class from one representative module.
+    Resolve one module class from one representative real module.
 
     Assumption:
-    - all modules inside the same class are structurally identical for the parts
-      that matter to PLC code generation (that was ensured by grouping logic)
+    all real modules inside the same class are structurally identical for the
+    parts that matter to PLC code generation.
     """
     interface_class = _get_interface_class(module)
     value = _resolve_value(modclass=modclass, module=module)
-    target = _resolve_target(interface_class=interface_class, value=value, module=module)
+    target = _resolve_target(
+        interface_class=interface_class,
+        value=value,
+        module=module,
+    )
     has_clear_errors_command = _resolve_has_clear_errors_command(module)
     pollinterval_changeable = _resolve_pollinterval_changeable(module)
-    custom_parameters = _resolve_custom_parameters(module)
+    custom_parameters = _resolve_custom_parameters(modclass=modclass, module=module)
     custom_commands = _resolve_custom_commands(module)
+
     module_variables = _build_module_variables(
         interface_class=interface_class,
         value=value,
@@ -935,28 +932,21 @@ def resolve_module_classes(normalized_cfg: Dict[str, Any]) -> ResolvedModuleClas
         )
 
     Processing steps:
-    1) group actual modules into module classes
-    2) pick one representative module per class
+    1) group real modules into module classes
+    2) pick one representative real module per class
     3) resolve each class once
     4) return the final resolved model
 
-    Example:
-        >>> resolved = resolve_module_classes(normalized_cfg)
-        >>> resolved.module_to_class["tc1"]
-        'tc'
-        >>> resolved.classes["tc"].interface_class
-        'Readable'
+    Module order note:
+    - grouping itself uses sorted names for deterministic grouping
+    - representative selection preserves the original normalized-config order
     """
     modules = normalized_cfg.get("modules") or {}
     if not isinstance(modules, dict):
         raise ValueError("normalized_cfg.modules must be a dict")
 
-    # Reuse the grouping logic already implemented.
-    # We may later move this fully into resolve/, but for now this avoids changing too much at once.
     module_to_class, _raw_classes = group_modules_into_classes(modules)
 
-    # Pick one representative module per class.
-    # We preserve module order from normalized config (no alphabetical sorting).
     example_module_by_class: dict[str, str] = {}
     for modname in modules.keys():
         modclass = module_to_class[modname]

@@ -88,11 +88,7 @@
       "x-plc": {
         "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
         "value": {
-          "enum_tag": "G_iHeatSwitchStatus",
-          "enum_member_map": {
-            "off": "G_iHeatSwitchStatus = FALSE",
-            "on": "G_iHeatSwitchStatus = TRUE"
-          }
+          "enum_tag": "G_iHeatSwitchStatus"
         },
         "status": {
           "hw_error_expr": "G_xHeatSwitchHwError",
@@ -193,9 +189,11 @@
         }
       },
       "x-plc": {
-        "timestamp_tag": "",
+        "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
         "value": {
-          "read_expr": "REAL_TO_LREAL(G_rMf)"
+          "read_expr": "REAL_TO_LREAL(G_rMf)",
+          "outofrange_min":-25,
+          "outofrange_max":25
         },
         "status": {
           "disabled_expr": "G_xMfInMaintenance",
@@ -210,7 +208,7 @@
           "reach_abs_tolerance" : 0.1
         },
         "clear_errors": {
-          "cmd_stmt": ""
+          "cmd_stmt": "IF G_xRemoteSecopEnabled AND NOT G_xEquipLockedInLocal THEN G_xDefaultAck := TRUE; END_IF"
         }
       }
     },
@@ -310,8 +308,10 @@
           "reach_timeout_s": 60,
           "reach_abs_tolerance": 0.1
         },
-        "clear_errors": {
-          "cmd_stmt": ""
+        "custom_parameters": {
+          "_sensor": {
+            "read_expr": "G_sSampleChSensorId"
+          }
         }
       }
     },
@@ -324,7 +324,7 @@
       "implementation": "github.com/SampleEnvironment/SECoP/PLC/lakeshore336",
       "accessibles": {
         "value": {
-          "description": "Coil temperatur",
+          "description": "Coil temperature",
           "datainfo": {
             "type": "double",
             "unit": "K"
@@ -375,14 +375,6 @@
             "maxchars": 80
           },
           "readonly": true
-        },
-        "_customcommand": {
-          "description": "Sensor number or calibration id",
-          "datainfo": {
-            "type": "command",
-            "argument": {"type": "string"}
-          },
-          "readonly": true
         }
       },
       "x-plc": {
@@ -390,8 +382,16 @@
         "value": {
           "read_expr": "REAL_TO_LREAL(G_rTc1ChannelATemp)"
         },
-        "clear_errors": {
-          "cmd_stmt": ""
+        "status": {
+          "hw_error_expr": "G_xTc1ChannelATempError",
+          "hw_error_description": "Coil temperature controller 1 - Sensor fault",
+          "comm_error_expr": "G_xTc1CommsError",
+          "comm_error_description": "Temperature controller 1 - Communication fault"
+        },
+        "custom_parameters": {
+          "_sensor": {
+            "read_expr": "G_sTc1ChannelATempSensorId"
+          }
         }
       }
     },
@@ -404,7 +404,7 @@
       "implementation": "github.com/SampleEnvironment/SECoP/PLC/lakeshore336",
       "accessibles": {
         "value": {
-          "description": "Coil temperatur",
+          "description": "Coil temperature",
           "datainfo": {
             "type": "double",
             "unit": "K"
@@ -462,8 +462,16 @@
         "value": {
           "read_expr": "REAL_TO_LREAL(G_rTc2ChannelATemp)"
         },
-        "clear_errors": {
-          "cmd_stmt": ""
+        "status": {
+          "hw_error_expr": "G_xTc2ChannelATempError",
+          "hw_error_description": "Coil temperature controller 2 - Sensor fault",
+          "comm_error_expr": "G_xTc2CommsError",
+          "comm_error_description": "Temperature controller 2 - Communication fault"
+        },
+        "custom_parameters": {
+          "_sensor": {
+            "read_expr": "G_sTc2ChannelATempSensorId"
+          }
         }
       }
     },

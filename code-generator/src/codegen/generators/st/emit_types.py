@@ -1,38 +1,41 @@
 """
-ST generator for module TYPES based on the resolved model.
+ST generators for module type declarations based on the resolved model.
 
-This emitter generates:
-- ET_Module_<modclass>_value   (only when value is enum)
-- ST_Module_<modclass>
+This file generates independent type files inside the output folder:
+- ET_Module_<modclass>_value.st                (only when value is enum)
+- ET_Module_<modclass>_<customparameter>.st    (for customised enum parameters)
+- ST_Module_<modclass>.st
 
-Important design rule:
-- This file must NOT inspect the raw / normalized JSON structure anymore.
-- All parsing, checks and decisions must already have been done by the resolve layer.
-- This emitter only consumes the resolved model and formats ST output.
+Important design rule
+---------------------
+This generator must not inspect raw or normalized JSON directly.
+All parsing, checks and decisions must already have been done by the resolve
+layer.
 
-Current sources:
+Current sources
+---------------
 - codegen.resolve.types.ResolvedModuleClasses
 - codegen.resolve.types.ResolvedModuleClass
 - codegen.resolve.types.ResolvedModuleVariable
+- codegen.resolve.types.ResolvedCustomParameter
 
-Example:
-    For a resolved class "mf", this emitter generates:
+Output layout
+-------------
+Files are written under:
+    <out_st_dir>/modules/
 
-        TYPE ST_Module_mf EXTENDS SECOP.ST_BaseModuleDrivable :
-        STRUCT
-         /// Current value of the module
-         lrValue: LREAL;
-         lrValueMin: LREAL ;
-         ...
-        END_STRUCT
-        END_TYPE
+This matches the existing strategy already used for:
+    FB_Module_<class>.st
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List
 
 from codegen.resolve.types import (
+    ResolvedCustomCommand,
+    ResolvedCustomParameter,
     ResolvedModuleClass,
     ResolvedModuleClasses,
     ResolvedModuleVariable,
@@ -61,43 +64,10 @@ def _extends_for_interface(interface_class: str) -> str:
     raise ValueError(f"Unknown interface class: {interface_class}")
 
 
-def _emit_enum_type(resolved_class: ResolvedModuleClass) -> str:
-    """
-    Emit enum TYPE for a resolved module class whose value is enum.
-
-    Example:
-        {attribute 'qualified_only' := ''}
-        {attribute 'strict' := ''}
-        TYPE ET_Module_heatswitch_value :
-        (
-         off := 0,
-         on := 1
-        );
-        END_TYPE
-    """
-    if not resolved_class.value.is_enum or not resolved_class.value.members:
-        raise ValueError(
-            f"_emit_enum_type called for non-enum class: {resolved_class.name}"
-        )
-
-    lines: list[str] = []
-    lines.append("{attribute 'qualified_only' := ''}")
-    lines.append("{attribute 'strict' := ''}")
-    lines.append(f"TYPE ET_Module_{resolved_class.name}_value :")
-    lines.append("(")
-
-    items = list(resolved_class.value.members.items())
-    for idx, (member_name, member_value) in enumerate(items):
-        comma = "," if idx < len(items) - 1 else ""
-        lines.append(f" {member_name} := {member_value}{comma}")
-
-    lines.append(");")
-    lines.append("END_TYPE")
-
-    return "\n".join(lines) + "\n\n"
-
-
-def _find_var(module_variables: List[ResolvedModuleVariable], name: str) -> ResolvedModuleVariable | None:
+def _find_var(
+    module_variables: List[ResolvedModuleVariable],
+    name: str,
+) -> ResolvedModuleVariable | None:
     """
     Find a resolved module variable by exact name.
 
@@ -109,16 +79,105 @@ def _find_var(module_variables: List[ResolvedModuleVariable], name: str) -> Reso
     return None
 
 
+def _enum_type_filename(enum_type_name: str) -> str:
+    """
+    Return the output filename for one enum DUT.
+
+    Example:
+        ET_Module_mf_value -> ET_Module_mf_value.st
+    """
+    return f"{enum_type_name}.st"
+
+
+# ---------------------------------------------------------------------------
+# Enum DUT emitters
+# ---------------------------------------------------------------------------
+
+def _emit_enum_type(type_name: str, members: dict[str, int]) -> str:
+    """
+    Emit one enum DUT.
+
+    Example:
+        {attribute 'qualified_only' := ''}
+        {attribute 'strict' := ''}
+        TYPE ET_Module_heatswitch_value :
+        (
+         off := 0,
+         on := 1
+        );
+        END_TYPE
+    """
+    if not members:
+        raise ValueError(f"_emit_enum_type called with empty members for {type_name}")
+
+    lines: list[str] = []
+    lines.append("{attribute 'qualified_only' := ''}")
+    lines.append("{attribute 'strict' := ''}")
+    lines.append(f"TYPE {type_name} :")
+    lines.append("(")
+
+    items = list(members.items())
+    for idx, (member_name, member_value) in enumerate(items):
+        comma = "," if idx < len(items) - 1 else ""
+        lines.append(f" {member_name} := {member_value}{comma}")
+
+    lines.append(");")
+    lines.append("END_TYPE")
+
+    return "\n".join(lines) + "\n"
+
+
+def _emit_value_enum_type(resolved_class: ResolvedModuleClass) -> tuple[str, str] | None:
+    """
+    Emit the enum DUT for accessibles.value when value is enum.
+
+    Returns:
+        (filename, source)
+    or:
+        None when value is not enum
+    """
+    if not resolved_class.value.is_enum or not resolved_class.value.members:
+        return None
+
+    type_name = f"ET_Module_{resolved_class.name}_value"
+    source = _emit_enum_type(type_name, resolved_class.value.members)
+    return _enum_type_filename(type_name), source
+
+
+def _emit_custom_parameter_enum_types(
+    resolved_class: ResolvedModuleClass,
+) -> list[tuple[str, str]]:
+    """
+    Emit enum DUT files for customised parameters of enum type.
+
+    Returns a list of:
+        (filename, source)
+    """
+    out: list[tuple[str, str]] = []
+
+    for cp in resolved_class.custom_parameters:
+        if not cp.is_enum or not cp.members:
+            continue
+
+        type_name = cp.plc_type
+        source = _emit_enum_type(type_name, cp.members)
+        out.append((_enum_type_filename(type_name), source))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# ST_Module_<class> building blocks
+# ---------------------------------------------------------------------------
+
 def _emit_value_block(resolved_class: ResolvedModuleClass) -> list[str]:
     """
     Emit the "value" block of ST_Module_<class> using resolved module variables.
 
     Expected order:
     - Value
-    - ValueMin / ValueMax (if any)
-    - ValueOutOfRangeL / H (if any)
-
-    This relies on the resolved model and does not inspect JSON.
+    - ValueMin / ValueMax (if configured)
+    - ValueOutOfRangeL / H (if configured)
     """
     lines: list[str] = []
 
@@ -137,14 +196,14 @@ def _emit_value_block(resolved_class: ResolvedModuleClass) -> list[str]:
     value_min = _find_var(vars_, f"{value_prefix}ValueMin")
     value_max = _find_var(vars_, f"{value_prefix}ValueMax")
     if value_min and value_max:
-        lines.append(f" {value_min.name}: {value_min.plc_type} ;")
-        lines.append(f" {value_max.name}: {value_max.plc_type} ;")
+        lines.append(f" {value_min.name}: {value_min.plc_type};")
+        lines.append(f" {value_max.name}: {value_max.plc_type};")
 
     value_oor_l = _find_var(vars_, f"{value_prefix}ValueOutOfRangeL")
     value_oor_h = _find_var(vars_, f"{value_prefix}ValueOutOfRangeH")
     if value_oor_l and value_oor_h:
-        lines.append(f" {value_oor_l.name}: {value_oor_l.plc_type} ;")
-        lines.append(f" {value_oor_h.name}: {value_oor_h.plc_type} ;")
+        lines.append(f" {value_oor_l.name}: {value_oor_l.plc_type};")
+        lines.append(f" {value_oor_h.name}: {value_oor_h.plc_type};")
 
     return lines
 
@@ -155,12 +214,10 @@ def _emit_target_block(resolved_class: ResolvedModuleClass) -> list[str]:
 
     Expected order:
     - Target
-    - TargetMin / TargetMax (if any)
-    - TargetLimitsMin / TargetLimitsMax (if any)
-    - TargetChangeNewVal
-    - TargetDriveTolerance (if any)
-
-    If the class has no target (Readable), returns an empty list.
+    - TargetMin / TargetMax (if configured)
+    - TargetLimitsMin / TargetLimitsMax (if configured)
+    - TargetChangeNewVal (Drivable only)
+    - TargetDriveTolerance (if configured)
     """
     if resolved_class.target is None:
         return []
@@ -181,14 +238,14 @@ def _emit_target_block(resolved_class: ResolvedModuleClass) -> list[str]:
     target_min = _find_var(vars_, f"{value_prefix}TargetMin")
     target_max = _find_var(vars_, f"{value_prefix}TargetMax")
     if target_min and target_max:
-        lines.append(f" {target_min.name}: {target_min.plc_type} ;")
-        lines.append(f" {target_max.name}: {target_max.plc_type} ;")
+        lines.append(f" {target_min.name}: {target_min.plc_type};")
+        lines.append(f" {target_max.name}: {target_max.plc_type};")
 
     target_limits_min = _find_var(vars_, f"{value_prefix}TargetLimitsMin")
     target_limits_max = _find_var(vars_, f"{value_prefix}TargetLimitsMax")
     if target_limits_min and target_limits_max:
-        lines.append(f" {target_limits_min.name}: {target_limits_min.plc_type} ;")
-        lines.append(f" {target_limits_max.name}: {target_limits_max.plc_type} ;")
+        lines.append(f" {target_limits_min.name}: {target_limits_min.plc_type};")
+        lines.append(f" {target_limits_max.name}: {target_limits_max.plc_type};")
 
     target_change = _find_var(vars_, f"{value_prefix}TargetChangeNewVal")
     if target_change:
@@ -205,7 +262,8 @@ def _emit_target_block(resolved_class: ResolvedModuleClass) -> list[str]:
 
 def _emit_clear_errors_block(resolved_class: ResolvedModuleClass) -> list[str]:
     """
-    Emit xClearErrors if the resolved class includes it.
+    Emit xClearErrors if the resolved class includes the standard clear_errors
+    command.
     """
     lines: list[str] = []
 
@@ -219,12 +277,10 @@ def _emit_clear_errors_block(resolved_class: ResolvedModuleClass) -> list[str]:
 
 def _emit_custom_parameters_block(resolved_class: ResolvedModuleClass) -> list[str]:
     """
-    Emit custom parameters in the order they were resolved.
-
+    Emit customised parameters in resolved order.
     """
     lines: list[str] = []
 
-    # Build a quick map from variable name to resolved module variable
     var_map = {v.name: v for v in resolved_class.module_variables}
 
     for cp in resolved_class.custom_parameters:
@@ -241,6 +297,32 @@ def _emit_custom_parameters_block(resolved_class: ResolvedModuleClass) -> list[s
     return lines
 
 
+def _emit_custom_commands_block(resolved_class: ResolvedModuleClass) -> list[str]:
+    """
+    Emit customised commands as BOOL variables in ST_Module_<class>.
+
+    This mirrors the existing handling of clear_errors: the variable expresses
+    the command request at PLC data level, while the actual behaviour is handled
+    elsewhere or left for manual implementation.
+    """
+    lines: list[str] = []
+
+    var_map = {v.name: v for v in resolved_class.module_variables}
+
+    for cc in resolved_class.custom_commands:
+        var = var_map.get(cc.plc_var_name)
+        if not var:
+            raise ValueError(
+                f"Resolved custom command '{cc.secop_name}' is missing module variable '{cc.plc_var_name}'"
+            )
+
+        comment = cc.description.strip() or f"Custom command {cc.secop_name}"
+        lines.append(f" /// {comment}")
+        lines.append(f" {var.name}: {var.plc_type};")
+
+    return lines
+
+
 def _emit_struct_type(resolved_class: ResolvedModuleClass) -> str:
     """
     Emit one ST_Module_<modclass> TYPE from one resolved module class.
@@ -251,40 +333,94 @@ def _emit_struct_type(resolved_class: ResolvedModuleClass) -> str:
     lines.append(f"TYPE ST_Module_{resolved_class.name} EXTENDS {extends} :")
     lines.append("STRUCT")
 
-    # Ordered blocks
     lines.extend(_emit_value_block(resolved_class))
     lines.extend(_emit_target_block(resolved_class))
     lines.extend(_emit_clear_errors_block(resolved_class))
     lines.extend(_emit_custom_parameters_block(resolved_class))
+    lines.extend(_emit_custom_commands_block(resolved_class))
 
     lines.append("END_STRUCT")
     lines.append("END_TYPE")
 
-    return "\n".join(lines) + "\n\n"
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Public file emitters
+# ---------------------------------------------------------------------------
+
+def emit_module_type_files(
+    resolved_class: ResolvedModuleClass,
+) -> list[tuple[str, str]]:
+    """
+    Build all type files required for one resolved module class.
+
+    Returned items:
+        (filename, source)
+
+    Output files may include:
+    - ET_Module_<class>_value.st
+    - ET_Module_<class>_<customparameter>.st
+    - ST_Module_<class>.st
+    """
+    out: list[tuple[str, str]] = []
+
+    value_enum = _emit_value_enum_type(resolved_class)
+    if value_enum is not None:
+        out.append(value_enum)
+
+    out.extend(_emit_custom_parameter_enum_types(resolved_class))
+
+    st_filename = f"ST_Module_{resolved_class.name}.st"
+    st_source = _emit_struct_type(resolved_class)
+    out.append((st_filename, st_source))
+
+    return out
+
+
+def emit_all_module_types(
+    classes: dict[str, ResolvedModuleClass],
+    out_dir: Path,
+) -> None:
+    """
+    Generate all type files for all resolved module classes.
+
+    Files are written to:
+        <out_dir>/modules/
+    """
+    modules_dir = out_dir / "modules"
+    modules_dir.mkdir(parents=True, exist_ok=True)
+
+    for resolved_class in classes.values():
+        for filename, source in emit_module_type_files(resolved_class):
+            path = modules_dir / filename
+            path.write_text(source, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Legacy compatibility helper
 # ---------------------------------------------------------------------------
 
 def emit_module_types(resolved: ResolvedModuleClasses) -> str:
     """
-    Emit all enum types and ST_Module_<class> types from the resolved model.
+    Legacy helper kept temporarily for compatibility.
 
-    Output order:
-    - classes in insertion order of resolved.classes
-    - enum TYPE first (only when needed)
-    - then ST_Module_<class>
+    It concatenates all generated type sources into one string in memory.
+    The current preferred strategy is emit_all_module_types(...), which writes
+    one file per type into st/modules/.
 
-    This order is convenient because struct declarations may reference enum types.
+    This function may be removed later once no caller relies on it.
     """
-    out: list[str] = []
+    chunks: list[str] = []
 
     for resolved_class in resolved.classes.values():
-        if resolved_class.value.is_enum:
-            out.append(_emit_enum_type(resolved_class))
+        value_enum = _emit_value_enum_type(resolved_class)
+        if value_enum is not None:
+            chunks.append(value_enum[1] + "\n")
 
-    for resolved_class in resolved.classes.values():
-        out.append(_emit_struct_type(resolved_class))
+        for _filename, source in _emit_custom_parameter_enum_types(resolved_class):
+            chunks.append(source + "\n")
 
-    return "".join(out)
+        chunks.append(_emit_struct_type(resolved_class) + "\n")
+
+    return "".join(chunks)

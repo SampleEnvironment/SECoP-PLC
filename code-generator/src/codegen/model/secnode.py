@@ -1,37 +1,62 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field, ConfigDict
+"""
+Pydantic models for the SECoP configuration file plus the project-specific
+PLC/tooling extension block ("x-plc").
 
+Purpose of this layer
+---------------------
+- validate the JSON structure,
+- apply defaults for optional fields,
+- reject unexpected keys,
+- provide a typed internal representation for the rest of the pipeline.
+
+Important design note
+---------------------
+This file describes configuration structure only. It does not decide:
+- whether a field is semantically allowed for a given SECoP type,
+- whether a missing field should produce WARNING or ERROR,
+- whether a missing PLC mapping should generate automatic code or TODO_CODEGEN.
+
+Those decisions belong to the validation rules and to the resolve layer.
 """
-Pydantic models for the SECoP + tooling ("x-plc") configuration file.
-- It validates that the JSON structure is correct (types, required fields, etc.).
-- It applies defaults for optional fields.
-- It gives very clear error messages with the exact path where something is wrong.
-- It produces a typed internal representation (model instance), easier to use later when generating code.
-"""
+
+from typing import Any, Dict, List, Optional, Union
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StrictBaseModel(BaseModel):
+    """
+    Base model used throughout the configuration schema.
+
+    Rules:
+    - extra fields are forbidden,
+    - aliases such as "x-plc" are accepted during parsing and serialisation.
+    """
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Node-level PLC/tooling configuration ("x-plc")
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 class PlcTcpConfig(StrictBaseModel):
     """
     TCP server settings used by the generated PLC project.
 
-    Example in JSON:
-      "x-plc": {
-        "tcp": {
-          "server_ip": "192.168.1.10",
-          "server_port": 10767,
-          "interface_healthy_tag": "G_stStatusPlc.G_xEthReady_If2"
+    Example:
+        "x-plc": {
+          "tcp": {
+            "server_ip": "192.168.1.10",
+            "server_port": 10767,
+            "interface_healthy_tag": "G_stStatusPlc.G_xEthReady_If2"
+          }
         }
-      }
+
+    Notes:
+    - Fields are optional at schema level.
+    - Missing values are handled later by business rules and generators.
     """
     server_ip: Optional[str] = None
     server_port: Optional[int] = None
@@ -43,121 +68,148 @@ class PlcNodeConfig(StrictBaseModel):
     Tooling configuration at SECoP node level.
 
     Notes:
-    - This data is NOT part of SECoP protocol itself.
-    - We keep it under "x-plc" so it can be removed easily to create a pure SECoP "describe" JSON.
+    - This data is project-specific and not part of the SECoP protocol itself.
+    - It is kept under "x-plc" so the protocol-facing structure can be derived
+      independently when needed.
     """
     tcp: Optional[PlcTcpConfig] = None
     secop_version: Optional[str] = None
     plc_timestamp_tag: Optional[str] = None
 
 
-# -----------------------------------------------------------------------------
-# SECoP protocol datatypes (datainfo) and accessibles
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# SECoP protocol datainfo and accessibles
+# ---------------------------------------------------------------------------
 
 class DataInfo(StrictBaseModel):
     """
     SECoP "datainfo" object.
 
-    In SECoP describe, each accessible has a "datainfo" describing the datatype.
+    The exact set of optional fields that make sense depends on datainfo.type.
+    This model allows the structural superset; semantic coherence is validated
+    later by business rules.
 
-    Important detail:
-    - For enums, "members" is a dictionary:
-        {"off": 0, "on": 1}
-    - For tuples, "members" is a list of member definitions:
-        [
-          {"type": "enum", "members": {"IDLE": 100, ...}},
-          {"type": "string"}
-        ]
-
-    Therefore, we allow "members" to be either:
-    - dict[str, int]  (enum)
-    - list[dict[str, Any]] (tuple members)
+    Important detail about "members":
+    - enum  -> dictionary, e.g. {"off": 0, "on": 1}
+    - tuple -> list of member definitions
+    - array -> protocol-specific nested description, typically represented as a
+      dictionary in this project
     """
     type: str
 
-    # Common optional fields used by numeric/string types
+    # Common optional fields. Business rules decide where each one is allowed.
     unit: Optional[str] = None
     min: Optional[float] = None
     max: Optional[float] = None
     maxchars: Optional[int] = None
     maxlen: Optional[int] = None
-    members: Optional[Union[Dict[str, int], List[Dict[str, Any]]]] = None
+    members: Optional[Union[Dict[str, int], List[Dict[str, Any]], Dict[str, Any]]] = None
 
-    # command-specific (SECoP): optional argument / result datainfo
+    # command-specific optional nested datainfo
     argument: Optional["DataInfo"] = None
     result: Optional["DataInfo"] = None
 
 
 class Accessible(StrictBaseModel):
     """
-    A SECoP accessible parameter/command in the 'describe' structure.
+    One SECoP accessible inside the module "accessibles" block.
 
     Example:
-      "value": {
-        "description": "current field in T",
-        "datainfo": {"type": "double", "unit": "T", "min": -15.0, "max": 15.0},
-        "readonly": true
-      }
+        "value": {
+          "description": "current field in T",
+          "datainfo": {
+            "type": "double",
+            "unit": "T",
+            "min": -15.0,
+            "max": 15.0
+          },
+          "readonly": true
+        }
+
+    Notes:
+    - "readonly" is kept in the model because it is part of the provided config.
+    - Project-specific restrictions on which accessibles may be writable are
+      enforced later by business rules.
     """
     description: str
     datainfo: DataInfo
     readonly: bool = False
-    checkable: Optional[bool] = None
 
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Module-level PLC/tooling configuration ("x-plc")
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 class PlcValueConfig(StrictBaseModel):
     """
-    PLC mapping for 'value' when the SECoP value is numeric/string/etc. Example:
-      "value": {
-        "read_expr": "REAL_TO_LREAL(G_rMf)"
-      }
+    PLC mapping for the standard SECoP accessible 'value'.
 
-    PLC mapping for 'value' when the SECoP value is an enum. Example:
-      "value": {
-        "enum_tag": "G_iHeatSwitchStatus",
-        "enum_member_map": {
-          "off": "G_iHeatSwitchStatus = FALSE",
-          "on": "G_iHeatSwitchStatus = TRUE"
+    Supported current patterns:
+    - numeric / string values:
+        {
+          "read_expr": "REAL_TO_LREAL(G_rMf)"
         }
-      }
+
+    - enum values:
+        {
+          "enum_tag": "G_iHeatSwitchStatus"
+        }
+
+    Optional out-of-range fields are allowed at schema level and validated later
+    by business rules.
     """
     read_expr: Optional[str] = None
     enum_tag: Optional[str] = None
-    enum_member_map: Optional[Dict[str, str]] = None
     outofrange_min: Optional[float] = None
     outofrange_max: Optional[float] = None
 
+
 class PlcStatusConfig(StrictBaseModel):
     """
-    PLC-related status extensions (project-specific).
+    PLC-related status extensions used by this project.
+
+    The generator may use these expressions to derive:
+    - Disabled state
+    - Communication error
+    - Hardware error
+
+    Notes:
+    - These fields are optional at schema level.
+    - Whether they are required or allowed in a specific module depends on
+      business rules and the status definition of that module.
     """
     disabled_expr: Optional[str] = ""
     disabled_description: Optional[str] = ""
+    comm_error_expr: Optional[str] = ""
+    comm_error_description: Optional[str] = ""
     hw_error_expr: Optional[str] = ""
     hw_error_description: Optional[str] = ""
 
 
 class PlcTargetConfig(StrictBaseModel):
     """
-    PLC mapping for 'target' write behaviour (numeric/string targets). Example:
-      "target": {
-        "write_stmt": "G_rMfSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_mf.lrTargetChangeNewVal);",
-        "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;",
-        "reach_timeout_s": 300,
-        "reach_abs_tolerance": 0.1
-      }
+    PLC mapping for the standard SECoP accessible 'target'.
 
-    PLC mapping for 'target' when the SECoP target is an enum. Example:
-      "target": {
-        "enum_tag": "G_iHeatSwitchCmd",
-        "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;",
-        "reach_timeout_s": 60
-      }
+    Supported current patterns:
+    - numeric / string targets:
+        {
+          "write_stmt": "G_rMfSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_mf.lrTargetChangeNewVal);",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled",
+          "reach_timeout_s": 300,
+          "reach_abs_tolerance": 0.1
+        }
+
+    - enum targets:
+        {
+          "enum_tag": "G_iHeatSwitchCmd",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled",
+          "reach_timeout_s": 60
+        }
+
+    Notes:
+    - write_stmt and enum_tag are polymorphic and validated later according to
+      the target datatype.
+    - reach_* fields are further constrained by interface class and datatype.
     """
     write_stmt: Optional[str] = None
     enum_tag: Optional[str] = None
@@ -168,17 +220,58 @@ class PlcTargetConfig(StrictBaseModel):
 
 class PlcClearErrorsConfig(StrictBaseModel):
     """
-    PLC mapping for 'clear_errors' command.
+    PLC mapping for the standard SECoP command 'clear_errors'.
 
     Example:
-      "clear_errors": { "cmd_stmt": "" }
+        "clear_errors": {
+          "cmd_stmt": "IF G_xRemoteSecopEnabled THEN G_xAck := TRUE; END_IF"
+        }
+
+    Note:
+    - cmd_stmt is optional. The generator can still clear the SECoP-side error
+      report even when no extra PLC action is configured.
     """
     cmd_stmt: Optional[str] = ""
 
 
+class PlcCustomParamConfig(StrictBaseModel):
+    """
+    PLC mapping for one customised SECoP parameter (name starts with '_').
+
+    Current supported patterns:
+    - numeric / string custom parameter:
+        {
+          "read_expr": "G_sTc1ChannelATempSensorId"
+        }
+
+    - enum custom parameter:
+        {
+          "enum_tag": "G_iSomething"
+        }
+
+    Notes:
+    - This mirrors the same idea used for the standard 'value' mapping.
+    - Business rules later decide which fields are allowed according to the
+      custom parameter datatype.
+    """
+    read_expr: Optional[str] = None
+    enum_tag: Optional[str] = None
+
+
 class PlcModuleConfig(StrictBaseModel):
     """
-    Tooling configuration under module-level "x-plc".
+    Tooling configuration under one module-level "x-plc" block.
+
+    Standard sections:
+    - timestamp_tag
+    - value
+    - status
+    - target
+    - clear_errors
+
+    Customised parameter mappings:
+    - custom_parameters: dictionary keyed by SECoP custom parameter name
+      (for example "_sensor")
     """
     timestamp_tag: Optional[str] = None
 
@@ -187,10 +280,12 @@ class PlcModuleConfig(StrictBaseModel):
     target: Optional[PlcTargetConfig] = None
     clear_errors: Optional[PlcClearErrorsConfig] = None
 
+    custom_parameters: Dict[str, PlcCustomParamConfig] = Field(default_factory=dict)
 
-# -----------------------------------------------------------------------------
-# Module + Node models (SECoP structure + optional x-plc tooling)
-# -----------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Module + node models
+# ---------------------------------------------------------------------------
 
 class Module(StrictBaseModel):
     """

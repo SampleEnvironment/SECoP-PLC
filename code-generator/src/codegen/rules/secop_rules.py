@@ -3,8 +3,24 @@ from __future__ import annotations
 """
 SECoP business rules (protocol/domain coherence).
 
-Pydantic already validated the "shape" (types, required fields, etc.).
-These rules validate cross-field constraints and project-specific SECoP constraints.
+Pydantic already validates the structural shape of the configuration:
+- required fields
+- field types
+- nested object structure
+- forbidden extra keys
+
+These business rules validate higher-level constraints such as:
+- protocol coherence between accessibles and interface classes
+- supported datainfo types for this PLC-based SEC node
+- readonly policy
+- status structure and status-code conventions
+- project-specific restrictions and simplifications
+
+General policy
+--------------
+- ERROR means the configuration is not acceptable for this generator
+- WARNING means generation may continue, but the resulting PLC project may still
+  need manual completion
 """
 
 from typing import List, Set, Dict
@@ -12,62 +28,119 @@ from typing import List, Set, Dict
 from codegen.model.secnode import SecNodeConfig, Module
 from codegen.rules.types import Finding, Severity
 
-# --- Protocol/type constants --------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Protocol/type constants
+# ---------------------------------------------------------------------------
 
 PROTOCOL_TYPES = {
-"double", "scaled", "int", "bool", "enum", "string",
-"blob", "array", "tuple", "struct", "matrix", "command",
+    "double",
+    "scaled",
+    "int",
+    "bool",
+    "enum",
+    "string",
+    "blob",
+    "array",
+    "tuple",
+    "struct",
+    "matrix",
+    "command",
 }
 
 PLC_UNSUPPORTED_TYPES = {"scaled", "blob", "matrix", "struct"}
 
 ALLOWED_TYPES_THIS_CODEGEN = PROTOCOL_TYPES - PLC_UNSUPPORTED_TYPES
+NUMERIC_TYPES_THIS_CODEGEN = {"double", "int"}
 
-# --- Helpers -----------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _has_class(m: Module, cls_name: str) -> bool:
+    """
+    Return True when the module declares the given interface class.
+    """
     return cls_name in (m.interface_classes or [])
 
 
 def _is_drivable(m: Module) -> bool:
+    """
+    Drivable modules are the most capable standard class in this project.
+    """
     return _has_class(m, "Drivable")
 
 
 def _is_writable(m: Module) -> bool:
+    """
+    Writable is explicit for Writable modules and implicit for Drivable modules.
+    """
     return _has_class(m, "Writable") or _is_drivable(m)
 
 
 def _is_readable(m: Module) -> bool:
+    """
+    Readable is explicit for Readable modules and implicit for Writable and
+    Drivable modules.
+    """
     return _has_class(m, "Readable") or _is_writable(m)
 
 
 def _required_accessibles_for_module(m: Module) -> Set[str]:
     """
+    Return the set of required standard accessibles for one module according to
+    the simplified interface-class model used by this generator.
+
     Project simplification:
     - Readable: value, status, pollinterval
     - Writable: Readable + target
     - Drivable: Writable + stop
     """
-    required = set()
+    required: Set[str] = set()
+
     if _is_readable(m):
         required |= {"value", "status", "pollinterval"}
+
     if _is_writable(m):
         required |= {"target"}
+
     if _is_drivable(m):
         required |= {"stop"}
+
     return required
 
 
-# --- Rules -------------------------------------------------------------------
+def _datainfo_fields_other_than_type_and_command(di) -> Dict[str, object]:
+    """
+    Return a small dictionary of optional DataInfo fields used by the generic
+    field-coherence rule.
+
+    This helper makes the later rule more readable.
+    """
+    return {
+        "unit": di.unit,
+        "min": di.min,
+        "max": di.max,
+        "maxchars": di.maxchars,
+        "maxlen": di.maxlen,
+        "members": di.members,
+        "argument": di.argument,
+        "result": di.result,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Rules
+# ---------------------------------------------------------------------------
 
 def rule_non_empty_modules(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-NODE-001:
-    Node must contain at least one module.
+    The node must contain at least one module.
 
-    Note:
-    Pydantic accepts an empty dict for modules (it's still a valid dict type),
-    so this rule enforces a business constraint.
+    Pydantic accepts an empty dictionary for "modules", so this must be enforced
+    here as a business rule.
     """
     findings: List[Finding] = []
 
@@ -77,7 +150,7 @@ def rule_non_empty_modules(cfg: SecNodeConfig) -> List[Finding]:
                 rule_id="R-NODE-001",
                 severity=Severity.ERROR,
                 path="$.modules",
-                message="Node must contain at least one module",
+                message="Node must contain at least one module.",
             )
         )
 
@@ -87,28 +160,26 @@ def rule_non_empty_modules(cfg: SecNodeConfig) -> List[Finding]:
 def rule_interface_classes_single(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-MOD-001:
-    "interface_classes" must be a list with exactly one element:
+    interface_classes must contain exactly one element:
     Readable OR Writable OR Drivable.
 
-    Readable is implicit in Writable, and Writable is implicit in Drivable.
+    Readable is implicit in Writable.
+    Writable is implicit in Drivable.
     """
     findings: List[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         classes = mod.interface_classes
 
-        # Pydantic already ensures it's a list[str],
-        # but we still enforce the project rule: exactly one class.
         if not isinstance(classes, list) or len(classes) != 1:
             findings.append(
                 Finding(
                     rule_id="R-MOD-001",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.interface_classes",
-                    message="interface_classes must be a list with exactly one element",
-                    hint=(
-                        "Use exactly one of: ['Readable'], ['Writable'], or ['Drivable']. "
-                        "Readable is implicit in Writable, and Writable is implicit in Drivable."
+                    message=(
+                        "interface_classes must be a list with exactly one "
+                        "element: Readable, Writable or Drivable."
                     ),
                 )
             )
@@ -121,10 +192,9 @@ def rule_interface_classes_single(cfg: SecNodeConfig) -> List[Finding]:
                     rule_id="R-MOD-001",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.interface_classes",
-                    message=f"Invalid interface class '{cls}'",
-                    hint=(
-                        "Allowed values are: Readable, Writable, Drivable. "
-                        "Readable is implicit in Writable, and Writable is implicit in Drivable."
+                    message=(
+                        f"Invalid interface class '{cls}'. Allowed values are "
+                        "Readable, Writable and Drivable."
                     ),
                 )
             )
@@ -135,8 +205,11 @@ def rule_interface_classes_single(cfg: SecNodeConfig) -> List[Finding]:
 def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-MOD-002:
-    PLC SEC node does not support HasOffset feature nor the 'offset' accessible.
-    Only known feature name is HasOffset; any other feature name is not implemented.
+    This PLC SEC node does not support the HasOffset feature or the standard
+    SECoP 'offset' accessible.
+
+    Only the feature name 'HasOffset' is recognised here. Any other feature
+    name is treated as unsupported.
     """
     findings: List[Finding] = []
 
@@ -150,8 +223,10 @@ def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Fi
                     rule_id="R-MOD-002",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.features",
-                    message="Unsupported feature(s) in module.features.",
-                    hint=f"Only supported protocol feature name is 'HasOffset' (but PLC does not implement it). Unknown={unknown}",
+                    message=(
+                        "Unsupported feature(s) found in module.features. "
+                        f"Unknown={unknown}"
+                    ),
                 )
             )
 
@@ -161,11 +236,9 @@ def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Fi
                     rule_id="R-MOD-002",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.features",
-                    message="features includes 'HasOffset', but this PLC-based SEC node does not require the HasOffset feature.",
-                    hint=(
-                        "There is no need to use protocol-level offsets. "
-                        "The SEC node implemented in the PLC can directly handle the desired "
-                        "scaling and format conversions and expose the final values."
+                    message=(
+                        "features includes 'HasOffset', but this PLC-based SEC "
+                        "node does not use protocol-level offset handling."
                     ),
                 )
             )
@@ -176,11 +249,9 @@ def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Fi
                     rule_id="R-MOD-002",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.offset",
-                    message="Module defines 'offset', but protocol-level offset handling is not required for this PLC-based SEC node.",
-                    hint=(
-                        "There is no need to use protocol-level offsets. "
-                        "The SEC node implemented in the PLC can directly handle the desired "
-                        "scaling and format conversions internally."
+                    message=(
+                        "Module defines 'offset', but this PLC-based SEC node "
+                        "does not use protocol-level offset handling."
                     ),
                 )
             )
@@ -191,14 +262,13 @@ def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Fi
 def rule_required_accessibles(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-CLS-001 / R-CLS-002 / R-CLS-003:
-    Required accessibles depending on interface class.
+    Validate the standard required accessibles for each interface class.
     """
     findings: List[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         accessibles = mod.accessibles or {}
 
-        # R-CLS-001 — Readable required accessibles
         if _is_readable(mod):
             missing = [k for k in ("value", "status", "pollinterval") if k not in accessibles]
             if missing:
@@ -207,30 +277,30 @@ def rule_required_accessibles(cfg: SecNodeConfig) -> List[Finding]:
                         rule_id="R-CLS-001",
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles",
-                        message="Readable modules must define value/status/pollinterval",
-                        hint=f"Missing: {missing}",
+                        message=(
+                            "Readable modules must define value, status and "
+                            f"pollinterval. Missing={missing}"
+                        ),
                     )
                 )
 
-        # R-CLS-002 — Writable required accessible: target
         if _is_writable(mod) and "target" not in accessibles:
             findings.append(
                 Finding(
                     rule_id="R-CLS-002",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.target",
-                    message="Writable/Drivable modules must define target",
+                    message="Writable and Drivable modules must define target.",
                 )
             )
 
-        # R-CLS-003 — Drivable required command: stop
         if _is_drivable(mod) and "stop" not in accessibles:
             findings.append(
                 Finding(
                     rule_id="R-CLS-003",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.stop",
-                    message="Drivable modules must define stop command",
+                    message="Drivable modules must define stop.",
                 )
             )
 
@@ -240,8 +310,11 @@ def rule_required_accessibles(cfg: SecNodeConfig) -> List[Finding]:
 def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-CLS-004:
-    Forbid standard SECoP accessibles that are not allowed for the module's interface class.
-    Any accessible whose name starts with '_' is considered "customised" and is always allowed.
+    Forbid standard accessibles that are not allowed for the module interface
+    class.
+
+    Any accessible whose name starts with '_' is considered customised and is
+    always allowed by this rule.
     """
     findings: List[Finding] = []
 
@@ -252,11 +325,10 @@ def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> List[Finding]:
     }
 
     for mod_name, mod in cfg.modules.items():
-        cls = mod.interface_classes[0]  # safe because R-MOD-001 enforces exactly 1
+        cls = mod.interface_classes[0]
         allowed = allowed_by_class.get(cls, set())
 
         for acc in mod.accessibles.keys():
-            # Customised accessibles are allowed
             if acc.startswith("_"):
                 continue
 
@@ -266,12 +338,9 @@ def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> List[Finding]:
                         rule_id="R-CLS-004",
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles.{acc}",
-                        message=f"Accessible '{acc}' is not allowed for interface class '{cls}'",
-                        hint=(
-                            "Supported non-customised accessibles are: "
-                            "Readable: value, status, pollinterval, clear_errors; "
-                            "Writable: Readable + target, target_limits; "
-                            "Drivable: Writable + stop."
+                        message=(
+                            f"Accessible '{acc}' is not allowed for interface "
+                            f"class '{cls}'."
                         ),
                     )
                 )
@@ -281,18 +350,15 @@ def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> List[Finding]:
 
 def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
     """
-    R-STAT-001/002/003/004/005 combined. Validate:
+    R-STAT-001 / 002 / 003 / 004 / 005 combined.
+
+    Validate:
     - status is tuple(enum, string)
-    - base status codes are present AND fixed by protocol:
-        * IDLE=100, WARN=200, ERROR=400
-      (ERROR if missing OR wrong status code)
-    - BUSY:
-        * required for Drivable modules with fixed code BUSY=300
-        * forbidden for non-Drivable modules
-      (ERROR if missing/forbidden OR if present with a wrong code)
-    - DISABLED code must be 0 if present
-    - extra status enum members are not supported by the current PLC SEC node version
-      (WARNING; they will be ignored by the generator)
+    - mandatory base status codes exist and use protocol-fixed numeric values
+    - BUSY exists only for Drivable modules and must use code 300
+    - DISABLED, if present, must use code 0
+    - extra status members are allowed only as a warning for now; they are not
+      supported by the current PLC SEC node generator
     """
     findings: List[Finding] = []
 
@@ -306,14 +372,13 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
         status = mod.accessibles["status"]
         di = status.datainfo
 
-        # 1) Structure: tuple(enum, string)
         if di.type != "tuple":
             findings.append(
                 Finding(
                     rule_id="R-STAT-001",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.status.datainfo.type",
-                    message="status must be datainfo.type == 'tuple'",
+                    message="status must use datainfo.type == 'tuple'.",
                 )
             )
             continue
@@ -324,7 +389,10 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
                     rule_id="R-STAT-001",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.status.datainfo.members",
-                    message="status must be tuple(enum,string) with exactly 2 members, as defined by the protocol",
+                    message=(
+                        "status must be tuple(enum, string) with exactly two "
+                        "members."
+                    ),
                 )
             )
             continue
@@ -338,7 +406,7 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
                     rule_id="R-STAT-001",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.status.datainfo.members[0]",
-                    message="status.members[0] must be an enum definition",
+                    message="status.members[0] must be an enum definition.",
                 )
             )
             continue
@@ -349,7 +417,7 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
                     rule_id="R-STAT-001",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.status.datainfo.members[1]",
-                    message="status.members[1] must be a string definition",
+                    message="status.members[1] must be a string definition.",
                 )
             )
             continue
@@ -361,80 +429,67 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
                     rule_id="R-STAT-001",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.status.datainfo.members[0].members",
-                    message="status enum members must be a dictionary",
+                    message="status enum members must be a dictionary.",
                 )
             )
             continue
 
-        # disabled_expr
-        disabled_expr = ""
-        if mod.x_plc and mod.x_plc.status:
-            disabled_expr = (mod.x_plc.status.disabled_expr or "").strip()
-
-        # 2) Expected codes (presence + exact code) for mandatory states
         expected_codes: Dict[str, int] = dict(base_required)
 
-        # BUSY iff Drivable
         if _is_drivable(mod):
             expected_codes["BUSY"] = 300
 
-        # 2a) Validate expected keys: missing or wrong code
         for key, expected in expected_codes.items():
             if key not in enum_members:
-                rid = "R-STAT-002"
-                if key == "BUSY":
-                    rid = "R-STAT-003"
-
+                rid = "R-STAT-003" if key == "BUSY" else "R-STAT-002"
                 findings.append(
                     Finding(
                         rule_id=rid,
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles.status.datainfo.members[0].members",
-                        message=f"{key}:{expected} is required",
+                        message=f"{key}:{expected} is required.",
                     )
                 )
                 continue
 
             actual = enum_members.get(key)
             if actual != expected:
-                rid = "R-STAT-002"
-                if key == "BUSY":
-                    rid = "R-STAT-003"
-
+                rid = "R-STAT-003" if key == "BUSY" else "R-STAT-002"
                 findings.append(
                     Finding(
                         rule_id=rid,
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles.status.datainfo.members[0].members",
-                        message=f"Wrong status code for '{key}': expected {expected}, got {actual}",
-                        hint="Status codes are fixed by the SECoP protocol.",
+                        message=(
+                            f"Wrong status code for '{key}': expected {expected}, "
+                            f"got {actual}."
+                        ),
                     )
                 )
 
-        # 3) Forbidden keys
         if (not _is_drivable(mod)) and ("BUSY" in enum_members):
             findings.append(
                 Finding(
                     rule_id="R-STAT-003",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.status.datainfo.members[0].members",
-                    message="BUSY is forbidden for non-Drivable modules",
+                    message="BUSY is forbidden for non-Drivable modules.",
                 )
             )
 
-        # 4) DISABLED: if present, it must use the fixed code 0 (no x-plc coherence checks here)
         if "DISABLED" in enum_members and enum_members.get("DISABLED") != 0:
             findings.append(
                 Finding(
                     rule_id="R-STAT-004",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.status.datainfo.members[0].members",
-                    message=f"Wrong status code for 'DISABLED': expected 0, got {enum_members.get('DISABLED')}",
-                    hint="DISABLED status code is fixed by the SECoP protocol.",
+                    message=(
+                        "Wrong status code for 'DISABLED': expected 0, got "
+                        f"{enum_members.get('DISABLED')}."
+                    ),
                 )
             )
 
-        # 5) Extra status codes (WARNING)
         extra_keys = sorted([k for k in enum_members.keys() if k not in allowed_status_keys])
         if extra_keys:
             findings.append(
@@ -443,8 +498,8 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
                     severity=Severity.WARNING,
                     path=f"$.modules.{mod_name}.accessibles.status.datainfo.members[0].members",
                     message=(
-                        "Status enum contains unsupported members for current PLC SEC node version; "
-                        f"they will be ignored by the generator. Extra={extra_keys}"
+                        "status enum contains unsupported extra members for the "
+                        f"current PLC SEC node generator. Extra={extra_keys}"
                     ),
                 )
             )
@@ -455,8 +510,8 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
 def rule_custom_command_accessibles_warn(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-001:
-    Custom command accessibles (name starts with '_') are allowed, but the generator
-    will not implement them automatically. We warn so the developer completes the PLC code.
+    Custom command accessibles (name starts with '_') are allowed, but the
+    generator does not implement them automatically yet.
     """
     findings: List[Finding] = []
 
@@ -469,10 +524,10 @@ def rule_custom_command_accessibles_warn(cfg: SecNodeConfig) -> List[Finding]:
                         severity=Severity.WARNING,
                         path=f"$.modules.{mod_name}.accessibles.{acc_name}",
                         message=(
-                            f"Custom command accessible '{acc_name}' is not generated automatically; "
-                            "the generator will emit placeholders and the developer must implement it manually."
+                            f"Custom command accessible '{acc_name}' is not "
+                            "generated automatically; manual PLC implementation "
+                            "will be required."
                         ),
-                        hint="Implement the command behaviour manually in the PLC project (or follow the demo patterns).",
                     )
                 )
 
@@ -482,10 +537,12 @@ def rule_custom_command_accessibles_warn(cfg: SecNodeConfig) -> List[Finding]:
 def rule_accessible_members_by_type(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-002:
-    datainfo.members rules by type:
-    - enum  => members must be a dict
-    - tuple => members must be a list
-    - array => members must be a dict
+    Validate the expected container type of datainfo.members for supported
+    datainfo.type values that use it.
+
+    - enum  -> members must be a dict
+    - tuple -> members must be a list
+    - array -> members must be a dict
     """
     findings: List[Finding] = []
 
@@ -514,6 +571,7 @@ def rule_accessible_members_by_type(cfg: SecNodeConfig) -> List[Finding]:
                             message="Invalid datainfo.members for type 'tuple' (must be a list).",
                         )
                     )
+
             elif di.type == "array":
                 if not isinstance(di.members, dict):
                     findings.append(
@@ -521,7 +579,7 @@ def rule_accessible_members_by_type(cfg: SecNodeConfig) -> List[Finding]:
                             rule_id="R-ACC-002",
                             severity=Severity.ERROR,
                             path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.members",
-                            message="Invalid datainfo.members for type 'array' (must be an object/dict).",
+                            message="Invalid datainfo.members for type 'array' (must be a dict).",
                         )
                     )
 
@@ -531,7 +589,7 @@ def rule_accessible_members_by_type(cfg: SecNodeConfig) -> List[Finding]:
 def rule_numeric_ranges_coherent(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-003:
-    If both min and max exist, min must be < max.
+    If both min and max exist, min must be strictly less than max.
     """
     findings: List[Finding] = []
 
@@ -551,14 +609,76 @@ def rule_numeric_ranges_coherent(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
+def rule_numeric_ranges_must_define_both_ends(cfg: SecNodeConfig) -> List[Finding]:
+    """
+    R-ACC-003B:
+    For numeric accessibles used in this project, min and max must be defined
+    together.
+
+    Applied to:
+    - value
+    - target
+    - target_limits
+
+    Rules:
+    - if min is configured, max must also be configured
+    - if max is configured, min must also be configured
+    """
+    findings: List[Finding] = []
+
+    checked_accessibles = {"value", "target", "target_limits"}
+
+    for mod_name, mod in cfg.modules.items():
+        for acc_name, acc in (mod.accessibles or {}).items():
+            if acc_name not in checked_accessibles:
+                continue
+
+            di = acc.datainfo
+            t = (di.type or "").strip()
+
+            # Only numeric SECoP scalar types are relevant for min/max pairs in
+            # the current generator.
+            if t not in NUMERIC_TYPES_THIS_CODEGEN:
+                continue
+
+            has_min = di.min is not None
+            has_max = di.max is not None
+
+            if has_min and not has_max:
+                findings.append(
+                    Finding(
+                        rule_id="R-ACC-003B",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.max",
+                        message=(
+                            f"{acc_name}.datainfo.min is configured, so "
+                            f"{acc_name}.datainfo.max must also be configured."
+                        ),
+                    )
+                )
+
+            if has_max and not has_min:
+                findings.append(
+                    Finding(
+                        rule_id="R-ACC-003B",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.min",
+                        message=(
+                            f"{acc_name}.datainfo.max is configured, so "
+                            f"{acc_name}.datainfo.min must also be configured."
+                        ),
+                    )
+                )
+
+    return findings
+
+
 def rule_target_limits_within_target(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-004:
-    If target_limits exists, it must restrict target:
-    - target_limits.min >= target.min
-    - target_limits.max <= target.max
+    If target_limits exists, it must restrict target.
 
-    We only enforce the check when the relevant min/max values are present.
+    This rule is only enforced when the relevant values are present.
     """
     findings: List[Finding] = []
 
@@ -571,7 +691,6 @@ def rule_target_limits_within_target(cfg: SecNodeConfig) -> List[Finding]:
         target_di = accessibles["target"].datainfo
         limits_di = accessibles["target_limits"].datainfo
 
-        # Only check when both sides provide the values needed.
         if (
             target_di.min is not None
             and limits_di.min is not None
@@ -582,7 +701,7 @@ def rule_target_limits_within_target(cfg: SecNodeConfig) -> List[Finding]:
                     rule_id="R-ACC-004",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo",
-                    message="target_limits.min must be >= target.min (target_limits restricts target).",
+                    message="target_limits.min must be >= target.min.",
                 )
             )
 
@@ -596,7 +715,7 @@ def rule_target_limits_within_target(cfg: SecNodeConfig) -> List[Finding]:
                     rule_id="R-ACC-004",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo",
-                    message="target_limits.max must be <= target.max (target_limits restricts target).",
+                    message="target_limits.max must be <= target.max.",
                 )
             )
 
@@ -606,8 +725,8 @@ def rule_target_limits_within_target(cfg: SecNodeConfig) -> List[Finding]:
 def rule_string_requires_maxchars(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-005:
-    If datainfo.type == 'string', maxchars must be provided (>0),
-    because PLC code needs a fixed string length.
+    string datainfo must define maxchars > 0 because PLC code generation needs a
+    fixed string length.
     """
     findings: List[Finding] = []
 
@@ -621,8 +740,10 @@ def rule_string_requires_maxchars(cfg: SecNodeConfig) -> List[Finding]:
                             rule_id="R-ACC-005",
                             severity=Severity.ERROR,
                             path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.maxchars",
-                            message="datainfo.maxchars is required (>0) when datainfo.type == 'string'.",
-                            hint="Set maxchars so that the generator can declare a PLC STRING with a fixed length.",
+                            message=(
+                                "datainfo.maxchars is required (>0) when "
+                                "datainfo.type == 'string'."
+                            ),
                         )
                     )
 
@@ -632,8 +753,8 @@ def rule_string_requires_maxchars(cfg: SecNodeConfig) -> List[Finding]:
 def rule_array_requires_maxlen(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-006:
-    If datainfo.type == 'array', maxlen must be provided (>0),
-    because PLC code needs a fixed array length.
+    array datainfo must define maxlen > 0 because PLC code generation needs a
+    fixed array length.
     """
     findings: List[Finding] = []
 
@@ -641,7 +762,6 @@ def rule_array_requires_maxlen(cfg: SecNodeConfig) -> List[Finding]:
         for acc_name, acc in (mod.accessibles or {}).items():
             di = acc.datainfo
             if di.type == "array":
-                # maxlen is expected in DataInfo model (Optional[int])
                 maxlen = getattr(di, "maxlen", None)
                 if maxlen is None or maxlen <= 0:
                     findings.append(
@@ -649,8 +769,10 @@ def rule_array_requires_maxlen(cfg: SecNodeConfig) -> List[Finding]:
                             rule_id="R-ACC-006",
                             severity=Severity.ERROR,
                             path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.maxlen",
-                            message="datainfo.maxlen is required (>0) when datainfo.type == 'array'.",
-                            hint="Set maxlen so the generator can declare a PLC ARRAY with a fixed length.",
+                            message=(
+                                "datainfo.maxlen is required (>0) when "
+                                "datainfo.type == 'array'."
+                            ),
                         )
                     )
 
@@ -660,65 +782,90 @@ def rule_array_requires_maxlen(cfg: SecNodeConfig) -> List[Finding]:
 def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-007:
-    Enforce readonly policy for standard SECoP accessibles used in this project:
-    - value   must be readonly == True
-    - status  must be readonly == True
-    - target  must be readonly == False
+    Enforce the current readonly policy for this PLC SEC node.
+
+    Project policy:
+    - command accessibles are always writable conceptually:
+        * readonly=true is forbidden
+        * readonly=false is accepted
+    - for non-command accessibles, readonly=false is allowed only for:
+        * target
+        * pollinterval
+    - every other non-command accessible must have readonly=true
     """
     findings: List[Finding] = []
 
+    writable_allowed = {"target", "pollinterval"}
+
     for mod_name, mod in cfg.modules.items():
-        accs = mod.accessibles or {}
+        for acc_name, acc in (mod.accessibles or {}).items():
+            acc_type = (acc.datainfo.type or "").strip()
 
-        # value
-        if "value" in accs and accs["value"].readonly is not True:
-            findings.append(
-                Finding(
-                    rule_id="R-ACC-007",
-                    severity=Severity.ERROR,
-                    path=f"$.modules.{mod_name}.accessibles.value.readonly",
-                    message="Accessible 'value' must have readonly=true.",
-                )
-            )
+            # Commands are conceptually writable.
+            # Because the Pydantic model defaults readonly to False, we only
+            # reject the contradictory case readonly=True.
+            if acc_type == "command":
+                if acc.readonly is True:
+                    findings.append(
+                        Finding(
+                            rule_id="R-ACC-007",
+                            severity=Severity.ERROR,
+                            path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
+                            message=(
+                                "The 'readonly' property must not be true for "
+                                "command accessibles. Commands are writable."
+                            ),
+                        )
+                    )
+                continue
 
-        # status
-        if "status" in accs and accs["status"].readonly is not True:
-            findings.append(
-                Finding(
-                    rule_id="R-ACC-007",
-                    severity=Severity.ERROR,
-                    path=f"$.modules.{mod_name}.accessibles.status.readonly",
-                    message="Accessible 'status' must have readonly=true.",
-                )
-            )
+            expected_readonly = acc_name not in writable_allowed
 
-        # target
-        if "target" in accs and accs["target"].readonly is not False:
-            findings.append(
-                Finding(
-                    rule_id="R-ACC-007",
-                    severity=Severity.ERROR,
-                    path=f"$.modules.{mod_name}.accessibles.target.readonly",
-                    message="Accessible 'target' must have readonly=false.",
-                )
-            )
+            if acc.readonly != expected_readonly:
+                if expected_readonly:
+                    findings.append(
+                        Finding(
+                            rule_id="R-ACC-007",
+                            severity=Severity.ERROR,
+                            path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
+                            message=(
+                                "Current PLC SEC node implements readonly=false "
+                                "only for the parameters 'target' and "
+                                "'pollinterval'."
+                            ),
+                        )
+                    )
+                else:
+                    findings.append(
+                        Finding(
+                            rule_id="R-ACC-007",
+                            severity=Severity.ERROR,
+                            path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
+                            message=(
+                                f"Accessible '{acc_name}' must have readonly=false "
+                                "in this PLC SEC node configuration."
+                            ),
+                        )
+                    )
 
     return findings
+
 
 def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-008:
-    In Writable/Drivable modules, target (and optional target_limits) must have the same datainfo.type as value.
+    In Writable and Drivable modules, target and target_limits must use the same
+    datainfo.type as value.
     """
     findings: List[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
-        if not _is_writable(mod):  # writable includes drivable via _is_writable()
+        if not _is_writable(mod):
             continue
 
         accs = mod.accessibles or {}
         if "value" not in accs or "target" not in accs:
-            continue  # other rules already handle required accessibles
+            continue
 
         value_type = (accs["value"].datainfo.type or "").strip()
         target_type = (accs["target"].datainfo.type or "").strip()
@@ -729,8 +876,10 @@ def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> List[Finding]
                     rule_id="R-ACC-008",
                     severity=Severity.ERROR,
                     path=f"$.modules.{mod_name}.accessibles.target.datainfo.type",
-                    message="target.datainfo.type must match value.datainfo.type",
-                    hint=f"value.type='{value_type}', target.type='{target_type}'",
+                    message=(
+                        "target.datainfo.type must match value.datainfo.type. "
+                        f"value.type='{value_type}', target.type='{target_type}'."
+                    ),
                 )
             )
 
@@ -742,33 +891,43 @@ def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> List[Finding]
                         rule_id="R-ACC-008",
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo.type",
-                        message="target_limits.datainfo.type must match value.datainfo.type",
-                        hint=f"value.type='{value_type}', target_limits.type='{lim_type}'",
+                        message=(
+                            "target_limits.datainfo.type must match "
+                            f"value.datainfo.type. value.type='{value_type}', "
+                            f"target_limits.type='{lim_type}'."
+                        ),
                     )
                 )
 
     return findings
 
 
-
-def rule_checkable_requires_manual_plc(cfg: SecNodeConfig) -> List[Finding]:
+def rule_bool_type_forbidden(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-009:
-    If an accessible has checkable=true, generator will emit placeholders and developer must complete PLC code.
+    datainfo.type == 'bool' is not accepted by this PLC SEC node project.
+
+    Project guidance:
+    use enum with values 0 and 1 and provide descriptive member names, as in the
+    typical heatswitch pattern:
+        {"type": "enum", "members": {"off": 0, "on": 1}}
     """
     findings: List[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
-            if acc.checkable is True:
+            if (acc.datainfo.type or "").strip() == "bool":
                 findings.append(
                     Finding(
                         rule_id="R-ACC-009",
-                        severity=Severity.WARNING,
-                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.checkable",
-                        message="checkable=true requires manual PLC implementation (generator will emit placeholders)",
-                        category="implementation",
-                        plc_refs=[f"ST_Module_{mod_name}"],
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.type",
+                        message=(
+                            "datainfo.type 'bool' is not accepted in this PLC SEC "
+                            "node project. Please use enum type with values 0 and 1, "
+                            "and provide descriptive member names, for example "
+                            '{"type": "enum", "members": {"off": 0, "on": 1}}.'
+                        ),
                     )
                 )
 
@@ -779,9 +938,10 @@ def rule_command_datainfo_shape(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-ACC-010:
     For datainfo.type == 'command':
-    - only optional fields allowed are 'argument' and 'result'
-    - if argument/result exist, they must contain 'type'
-    - argument/result types must be supported by this generator (same constraints as R-DI-001)
+
+    - the only optional sub-fields allowed are 'argument' and 'result'
+    - if argument/result exist, they must define 'type'
+    - argument/result types must be supported by this generator
     """
     findings: List[Finding] = []
 
@@ -792,19 +952,22 @@ def rule_command_datainfo_shape(cfg: SecNodeConfig) -> List[Finding]:
                 continue
 
             if (
-                    di.unit is not None
-                    or di.min is not None
-                    or di.max is not None
-                    or di.maxchars is not None
-                    or di.maxlen is not None
-                    or di.members is not None
+                di.unit is not None
+                or di.min is not None
+                or di.max is not None
+                or di.maxchars is not None
+                or di.maxlen is not None
+                or di.members is not None
             ):
                 findings.append(
                     Finding(
                         rule_id="R-ACC-010",
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo",
-                        message="Invalid command datainfo: only 'argument' and/or 'result' are allowed as optional fields.",
+                        message=(
+                            "Invalid command datainfo: only 'argument' and/or "
+                            "'result' are allowed as optional fields."
+                        ),
                     )
                 )
 
@@ -820,7 +983,10 @@ def rule_command_datainfo_shape(cfg: SecNodeConfig) -> List[Finding]:
                             rule_id="R-ACC-010",
                             severity=Severity.ERROR,
                             path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.{sub_name}.type",
-                            message=f"Invalid command datainfo: '{sub_name}' must define 'type'.",
+                            message=(
+                                f"Invalid command datainfo: '{sub_name}' must "
+                                "define 'type'."
+                            ),
                         )
                     )
                     continue
@@ -831,10 +997,95 @@ def rule_command_datainfo_shape(cfg: SecNodeConfig) -> List[Finding]:
                             rule_id="R-ACC-010",
                             severity=Severity.ERROR,
                             path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.{sub_name}.type",
-                            message=f"Invalid command datainfo: '{sub_name}.type' is not supported on this PLC SEC node.",
-                            hint=f"Allowed types (this generator): {sorted(ALLOWED_TYPES_THIS_CODEGEN)}",
+                            message=(
+                                f"Invalid command datainfo: '{sub_name}.type' "
+                                "is not supported on this PLC SEC node."
+                            ),
                         )
                     )
+
+    return findings
+
+
+def rule_datainfo_field_coherence(cfg: SecNodeConfig) -> List[Finding]:
+    """
+    R-DI-002:
+    Validate coherence between datainfo.type and the optional DataInfo fields.
+
+    Rules enforced in this project:
+    - min/max only allowed for numeric scalar types currently supported here
+      ('double', 'int')
+    - maxchars only allowed for 'string'
+    - maxlen only allowed for 'array'
+    - members only allowed for 'enum', 'tuple', 'array'
+    - argument/result only allowed for 'command'
+    """
+    findings: List[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        for acc_name, acc in (mod.accessibles or {}).items():
+            di = acc.datainfo
+            t = (di.type or "").strip()
+
+            if (di.min is not None or di.max is not None) and t not in NUMERIC_TYPES_THIS_CODEGEN:
+                findings.append(
+                    Finding(
+                        rule_id="R-DI-002",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo",
+                        message=(
+                            "datainfo.min and datainfo.max are only allowed for "
+                            "numeric types currently supported by this generator "
+                            "('double' or 'int')."
+                        ),
+                    )
+                )
+
+            if di.maxchars is not None and t != "string":
+                findings.append(
+                    Finding(
+                        rule_id="R-DI-002",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.maxchars",
+                        message="datainfo.maxchars is only allowed when datainfo.type == 'string'.",
+                    )
+                )
+
+            if di.maxlen is not None and t != "array":
+                findings.append(
+                    Finding(
+                        rule_id="R-DI-002",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.maxlen",
+                        message="datainfo.maxlen is only allowed when datainfo.type == 'array'.",
+                    )
+                )
+
+            if di.members is not None and t not in {"enum", "tuple", "array"}:
+                findings.append(
+                    Finding(
+                        rule_id="R-DI-002",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.members",
+                        message=(
+                            "datainfo.members is only allowed when datainfo.type "
+                            "is 'enum', 'tuple' or 'array'."
+                        ),
+                    )
+                )
+
+            if (di.argument is not None or di.result is not None) and t != "command":
+                findings.append(
+                    Finding(
+                        rule_id="R-DI-002",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo",
+                        message=(
+                            "datainfo.argument and datainfo.result are only "
+                            "allowed when datainfo.type == 'command'."
+                        ),
+                    )
+                )
 
     return findings
 
@@ -842,11 +1093,10 @@ def rule_command_datainfo_shape(cfg: SecNodeConfig) -> List[Finding]:
 def rule_datainfo_type_supported(cfg: SecNodeConfig) -> List[Finding]:
     """
     R-DI-001:
-    datainfo.type must be defined by the SECoP protocol and supported by the current PLC SEC node version.
+    datainfo.type must be defined by the SECoP protocol and supported by the
+    current PLC SEC node generator.
     """
     findings: List[Finding] = []
-
-    allowed_sorted = sorted(ALLOWED_TYPES_THIS_CODEGEN)
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -859,8 +1109,10 @@ def rule_datainfo_type_supported(cfg: SecNodeConfig) -> List[Finding]:
                         rule_id="R-DI-001",
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.type",
-                        message="type not required/supported on current sec node plc version",
-                        hint=f"Allowed types (this generator): {allowed_sorted}",
+                        message=(
+                            "datainfo.type is defined by SECoP but not supported "
+                            "by the current PLC SEC node generator."
+                        ),
                     )
                 )
                 continue
@@ -871,11 +1123,8 @@ def rule_datainfo_type_supported(cfg: SecNodeConfig) -> List[Finding]:
                         rule_id="R-DI-001",
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.type",
-                        message=f"datainfo.type '{t}' is not defined by the SECoP protocol",
-                        hint=f"Allowed types (this generator): {allowed_sorted}",
+                        message=f"datainfo.type '{t}' is not defined by the SECoP protocol.",
                     )
                 )
 
     return findings
-
-
