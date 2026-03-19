@@ -15,9 +15,9 @@ Design notes
 - This emitter only formats Structured Text.
 - All structural decisions about what applies to each module should already have
   been resolved before reaching this stage.
-- For project fields that always apply conceptually (for example TCP settings),
-  missing concrete values do not suppress output silently. Instead, this emitter
-  generates TODO_CODEGEN comments so the PLC integrator can complete them.
+- For project fields that always apply conceptually but are missing in the
+  configuration, this emitter generates TASK comments and adds an entry to the
+  task list so the PLC integrator can complete them later.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from codegen.resolve.real_modules import (
     ResolvedRealModule,
     ResolvedRealModules,
 )
+from codegen.tasklist import TaskList
 
 
 # ---------------------------------------------------------------------------
@@ -78,21 +79,22 @@ def _format_st_scalar(value: float | int | str) -> str:
     return str(value)
 
 
-def _emit_optional_scalar_assignment(
+def _emit_optional_scalar_assignment_with_task(
     st_lhs: str,
     value: float | int | str | None,
-    todo_message: str,
+    plc_path: str,
+    task_message: str,
+    tasklist: TaskList,
 ) -> List[str]:
     """
     Emit one scalar ST assignment when the value exists.
 
-    If the value is missing, emit a TODO_CODEGEN comment instead.
+    If the value is missing, emit a task comment and register one task.
 
-    This helper is used for project fields that always apply conceptually but
-    may be absent from the config.
+    This helper is used for project fields that always apply conceptually.
     """
     if value is None:
-        return [f"// TODO_CODEGEN: {todo_message}"]
+        return [tasklist.make_st_comment(plc_path=plc_path, message=task_message)]
 
     return [f"{st_lhs} := {_format_st_scalar(value)};"]
 
@@ -126,14 +128,16 @@ def _emit_fixed_header() -> List[str]:
 # SEC node init
 # ---------------------------------------------------------------------------
 
-def _emit_init_sec_node(resolved: ResolvedRealModules) -> List[str]:
+def _emit_init_sec_node(
+    resolved: ResolvedRealModules,
+    tasklist: TaskList,
+) -> List[str]:
     """
     Emit the SEC node initialization block.
 
-    Important:
     Several node-level PLC/tooling fields always apply conceptually in this
-    project. If they are not configured, TODO_CODEGEN comments are emitted
-    instead of invalid ST.
+    project. If they are not configured, task comments are emitted instead of
+    invalid ST.
     """
     lines: List[str] = []
     sec_node = resolved.sec_node
@@ -141,27 +145,35 @@ def _emit_init_sec_node(resolved: ResolvedRealModules) -> List[str]:
     lines.append("// SEC node")
     lines.append("// ----------------------------------------------------------------")
     lines.append("")
-
     lines.append(f"SECOP.GVL.G_st_SecNode.sFirmware := {_format_st_scalar(sec_node.firmware)};")
+
     lines.extend(
-        _emit_optional_scalar_assignment(
+        _emit_optional_scalar_assignment_with_task(
             "SECOP.GVL.G_st_SecNode.sSecopVersion",
             sec_node.secop_version,
-            "configure SEC node SECoP version",
+            "SecopInit.sec_node.secop_version",
+            "Configure SEC node SECoP version.",
+            tasklist,
         )
     )
+
     lines.extend(
-        _emit_optional_scalar_assignment(
+        _emit_optional_scalar_assignment_with_task(
             "SECOP.GVL.G_st_SecNode.sTcpServerIp",
             sec_node.tcp_server_ip,
-            "configure SEC node TCP server IP",
+            "SecopInit.sec_node.tcp.server_ip",
+            "Configure SEC node TCP server IP.",
+            tasklist,
         )
     )
+
     lines.extend(
-        _emit_optional_scalar_assignment(
+        _emit_optional_scalar_assignment_with_task(
             "SECOP.GVL.G_st_SecNode.uiTcpServerPort",
             sec_node.tcp_server_port,
-            "configure SEC node TCP server port",
+            "SecopInit.sec_node.tcp.server_port",
+            "Configure SEC node TCP server port.",
+            tasklist,
         )
     )
 
@@ -180,7 +192,10 @@ def _emit_init_sec_node(resolved: ResolvedRealModules) -> List[str]:
 # Per-module init
 # ---------------------------------------------------------------------------
 
-def _emit_module_init(module: ResolvedRealModule) -> List[str]:
+def _emit_module_init(
+    module: ResolvedRealModule,
+    tasklist: TaskList,
+) -> List[str]:
     """
     Emit initialization lines for one real module.
 
@@ -198,67 +213,63 @@ def _emit_module_init(module: ResolvedRealModule) -> List[str]:
     lines.append(f"{pfx}.sName := {_format_st_scalar(module.module_name)};")
     lines.append(f"{pfx}.sDescription := {_format_st_scalar(module.description)};")
 
-    # target min/max
     if module.target_has_min_max:
         lines.append(f"{pfx}.{module.value_var_prefix}TargetMin := {module.target_min};")
         lines.append(f"{pfx}.{module.value_var_prefix}TargetMax := {module.target_max};")
 
-    # target drive tolerance
     if module.target_has_drive_tolerance:
         lines.append(
             f"{pfx}.{module.value_var_prefix}TargetDriveTolerance := {module.target_drive_tolerance};"
         )
 
-    # value min/max
     if module.value_has_min_max:
         lines.append(f"{pfx}.{module.value_var_prefix}ValueMin := {module.value_min};")
         lines.append(f"{pfx}.{module.value_var_prefix}ValueMax := {module.value_max};")
 
-    # value out-of-range
     if module.value_has_out_of_range:
-        lines.append(
-            f"{pfx}.{module.value_var_prefix}ValueOutOfRangeL := {module.value_out_of_range_l};"
-        )
-        lines.append(
-            f"{pfx}.{module.value_var_prefix}ValueOutOfRangeH := {module.value_out_of_range_h};"
-        )
+        lines.append(f"{pfx}.{module.value_var_prefix}ValueOutOfRangeL := {module.value_out_of_range_l};")
+        lines.append(f"{pfx}.{module.value_var_prefix}ValueOutOfRangeH := {module.value_out_of_range_h};")
 
-    # target limits
     if module.target_has_limits:
-        lines.append(
-            f"{pfx}.{module.value_var_prefix}TargetLimitsMin := {module.target_limits_min};"
-        )
-        lines.append(
-            f"{pfx}.{module.value_var_prefix}TargetLimitsMax := {module.target_limits_max};"
-        )
+        lines.append(f"{pfx}.{module.value_var_prefix}TargetLimitsMin := {module.target_limits_min};")
+        lines.append(f"{pfx}.{module.value_var_prefix}TargetLimitsMax := {module.target_limits_max};")
 
-    # pollinterval
     lines.append(f"{pfx}.stPollInterval.lrValue := 5;")
     lines.append(f"{pfx}.stPollInterval.lrMin := {module.pollinterval_min};")
     lines.append(f"{pfx}.stPollInterval.lrMax := {module.pollinterval_max};")
     lines.append(f"{pfx}.stPollInterval.xReadOnly := {_bool_literal(module.pollinterval_readonly)};")
 
-    # target drive timeout
     if module.interface_class == "Drivable":
         if module.x_plc_target and module.x_plc_target.reach_timeout_s is not None:
-            lines.append(
-                f"{pfx}.stTargetDrive.timTimeout := T#{module.x_plc_target.reach_timeout_s}S;"
-            )
+            lines.append(f"{pfx}.stTargetDrive.timTimeout := T#{module.x_plc_target.reach_timeout_s}S;")
         else:
             lines.append(
-                f"// TODO_CODEGEN: configure target drive timeout for module {module.module_name}"
+                tasklist.make_st_comment(
+                    plc_path=f"SecopInit.{module.module_name}.target_drive_timeout",
+                    message=f"Configure target drive timeout for module {module.module_name}.",
+                )
             )
 
-    # custom parameters
     for cp in module.custom_parameters:
         lines.append(
-            f"// TODO_CODEGEN: initialise customised parameter {cp.secop_name} for module {module.module_name} if needed"
+            tasklist.make_st_comment(
+                plc_path=f"SecopInit.{module.module_name}.{cp.secop_name}",
+                message=(
+                    f"Initialise customised parameter {cp.secop_name} for module "
+                    f"{module.module_name} if required by the PLC project."
+                ),
+            )
         )
 
-    # custom commands
     for cc in module.custom_commands:
         lines.append(
-            f"// TODO_CODEGEN: initialise customised command {cc.secop_name} for module {module.module_name} if needed"
+            tasklist.make_st_comment(
+                plc_path=f"SecopInit.{module.module_name}.{cc.secop_name}",
+                message=(
+                    f"Initialise customised command {cc.secop_name} for module "
+                    f"{module.module_name} if required by the PLC project."
+                ),
+            )
         )
 
     lines.append("")
@@ -266,14 +277,17 @@ def _emit_module_init(module: ResolvedRealModule) -> List[str]:
     return lines
 
 
-def _emit_init_modules(resolved: ResolvedRealModules) -> List[str]:
+def _emit_init_modules(
+    resolved: ResolvedRealModules,
+    tasklist: TaskList,
+) -> List[str]:
     """
     Emit initialization blocks for all real modules in config order.
     """
     lines: List[str] = []
 
     for module_name in resolved.sec_node.module_names_in_order:
-        lines.extend(_emit_module_init(resolved.modules[module_name]))
+        lines.extend(_emit_module_init(resolved.modules[module_name], tasklist))
 
     return lines
 
@@ -282,14 +296,17 @@ def _emit_init_modules(resolved: ResolvedRealModules) -> List[str]:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def emit_prg_secop_init(resolved: ResolvedRealModules) -> str:
+def emit_prg_secop_init(
+    resolved: ResolvedRealModules,
+    tasklist: TaskList,
+) -> str:
     """
     Emit the full ST source for PROGRAM SecopInit.
     """
     lines: List[str] = []
 
     lines.extend(_emit_fixed_header())
-    lines.extend(_emit_init_sec_node(resolved))
-    lines.extend(_emit_init_modules(resolved))
+    lines.extend(_emit_init_sec_node(resolved, tasklist))
+    lines.extend(_emit_init_modules(resolved, tasklist))
 
     return "\n".join(lines) + "\n"

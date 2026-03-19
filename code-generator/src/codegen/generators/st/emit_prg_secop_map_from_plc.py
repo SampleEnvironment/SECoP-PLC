@@ -19,8 +19,8 @@ Design notes
 - This emitter only formats Structured Text.
 - Structural applicability is decided earlier in the resolve layer.
 - For project fields that always apply conceptually but are missing in the
-  configuration, this emitter generates TODO_CODEGEN comments instead of invalid
-  ST.
+  configuration, this emitter generates TASK comments and adds an entry to the
+  task list instead of emitting invalid ST.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from codegen.resolve.real_modules import (
     ResolvedRealCustomParameterPlc,
 )
 from codegen.resolve.types import ResolvedModuleClasses, ResolvedCustomParameter
+from codegen.tasklist import TaskList
 
 
 def _module_prefix(module_name: str) -> str:
@@ -75,56 +76,6 @@ def _emit_call_secop_init() -> List[str]:
     return lines
 
 
-def _emit_optional_assignment(
-    lhs: str,
-    rhs_expr: str | None,
-    todo_message: str,
-) -> List[str]:
-    """
-    Emit one ST assignment if the right-hand-side expression is available.
-
-    Otherwise emit a TODO_CODEGEN comment.
-    """
-    if rhs_expr is None:
-        return [f"// TODO_CODEGEN: {todo_message}"]
-    return [f"{lhs} := {rhs_expr};"]
-
-
-def _emit_sec_node_mapping(resolved: ResolvedRealModules) -> List[str]:
-    """
-    Emit SEC node timestamp and interface-ready mapping.
-
-    These concepts always apply in this project. Missing configured tags are
-    turned into TODO_CODEGEN comments.
-    """
-    lines: List[str] = []
-    sec_node = resolved.sec_node
-
-    lines.append("// SEC node")
-    lines.append("// -----------------------------------------------------------------")
-    lines.append("")
-    lines.append("// Timestamp")
-    lines.extend(
-        _emit_optional_assignment(
-            "SECOP.GVL.G_st_SecNode.sTimestamp",
-            sec_node.plc_timestamp_tag,
-            "configure SEC node PLC timestamp tag",
-        )
-    )
-    lines.append("")
-    lines.append("// Interface ready")
-    lines.extend(
-        _emit_optional_assignment(
-            "SECOP.GVL.G_st_SecNode.xTcpServerInterfaceReady",
-            sec_node.tcp_server_interface_healthy_tag,
-            "configure SEC node TCP interface healthy tag",
-        )
-    )
-    lines.append("")
-
-    return lines
-
-
 def _resolved_enum_members(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
@@ -152,9 +103,61 @@ def _custom_parameter_enum_members(
     return list(cp.members.items())
 
 
+def _emit_sec_node_mapping(
+    resolved: ResolvedRealModules,
+    tasklist: TaskList,
+) -> List[str]:
+    """
+    Emit SEC node timestamp and interface-ready mapping.
+
+    These concepts always apply in this project. Missing configured tags are
+    turned into task comments and task-list entries.
+    """
+    lines: List[str] = []
+    sec_node = resolved.sec_node
+
+    lines.append("// SEC node")
+    lines.append("// -----------------------------------------------------------------")
+    lines.append("")
+    lines.append("// Timestamp")
+    if sec_node.plc_timestamp_tag:
+        lines.append(f"SECOP.GVL.G_st_SecNode.sTimestamp := {sec_node.plc_timestamp_tag};")
+    else:
+        lines.append(
+            tasklist.make_st_comment(
+                plc_path="SecopMapFromPlc.sec_node.timestamp",
+                message=(
+                    "Configure SEC node PLC timestamp tag and map it to "
+                    "SECOP.GVL.G_st_SecNode.sTimestamp."
+                ),
+            )
+        )
+    lines.append("")
+    lines.append("// Interface ready")
+    if sec_node.tcp_server_interface_healthy_tag:
+        lines.append(
+            "SECOP.GVL.G_st_SecNode.xTcpServerInterfaceReady := "
+            f"{sec_node.tcp_server_interface_healthy_tag};"
+        )
+    else:
+        lines.append(
+            tasklist.make_st_comment(
+                plc_path="SecopMapFromPlc.sec_node.interface_ready",
+                message=(
+                    "Configure SEC node TCP interface healthy tag and map it to "
+                    "SECOP.GVL.G_st_SecNode.xTcpServerInterfaceReady."
+                ),
+            )
+        )
+    lines.append("")
+
+    return lines
+
+
 def _emit_value_mapping(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
+    tasklist: TaskList,
 ) -> List[str]:
     """
     Emit mapping for the standard SECoP accessible 'value'.
@@ -173,7 +176,15 @@ def _emit_value_mapping(
         if expr:
             lines.append(f"{pfx}.{module.value_var_prefix}Value := {expr};")
         else:
-            lines.append("// TODO_CODEGEN: configure value mapping (missing x-plc.value.read_expr)")
+            lines.append(
+                tasklist.make_st_comment(
+                    plc_path=f"SecopMapFromPlc.{module.module_name}.value",
+                    message=(
+                        f"Configure automatic PLC-to-SECoP value mapping for module "
+                        f"{module.module_name} (missing x-plc.value.read_expr)."
+                    ),
+                )
+            )
         lines.append("")
         return lines
 
@@ -189,16 +200,36 @@ def _emit_value_mapping(
                 )
             lines.append("END_CASE")
         else:
-            lines.append("// TODO_CODEGEN: configure enum value mapping (missing x-plc.value.enum_tag)")
+            lines.append(
+                tasklist.make_st_comment(
+                    plc_path=f"SecopMapFromPlc.{module.module_name}.value",
+                    message=(
+                        f"Configure automatic enum PLC-to-SECoP value mapping for "
+                        f"module {module.module_name} (missing x-plc.value.enum_tag)."
+                    ),
+                )
+            )
         lines.append("")
         return lines
 
-    lines.append("// TODO_CODEGEN: manual implementation required for unsupported value type")
+    lines.append(
+        tasklist.make_st_comment(
+            plc_path=f"SecopMapFromPlc.{module.module_name}.value",
+            message=(
+                f"Manual PLC-to-SECoP value mapping is required for module "
+                f"{module.module_name} because the value type is not supported "
+                "by automatic generation."
+            ),
+        )
+    )
     lines.append("")
     return lines
 
 
-def _emit_target_change_interlock(module: ResolvedRealModule) -> List[str]:
+def _emit_target_change_interlock(
+    module: ResolvedRealModule,
+    tasklist: TaskList,
+) -> List[str]:
     """
     Emit mapping for the xPossible interlock used by Writable / Drivable target
     changes.
@@ -213,18 +244,29 @@ def _emit_target_change_interlock(module: ResolvedRealModule) -> List[str]:
     if expr:
         lines.append(f"{_module_prefix(module.module_name)}.stTargetWrite.xPossible := {expr};")
     else:
-        lines.append("// TODO_CODEGEN: configure target interlock (missing x-plc.target.change_possible_expr)")
+        lines.append(
+            tasklist.make_st_comment(
+                plc_path=f"SecopMapFromPlc.{module.module_name}.target_change_interlock",
+                message=(
+                    f"Configure target interlock for module {module.module_name} "
+                    f"(missing x-plc.target.change_possible_expr)."
+                ),
+            )
+        )
     lines.append("")
 
     return lines
 
 
-def _emit_timestamp_mapping(module: ResolvedRealModule) -> List[str]:
+def _emit_timestamp_mapping(
+    module: ResolvedRealModule,
+    tasklist: TaskList,
+) -> List[str]:
     """
     Emit module timestamp mapping.
 
-    The module timestamp concept always applies in this project. Missing
-    configuration therefore becomes TODO_CODEGEN instead of invalid ST.
+    Module timestamp mapping always applies conceptually in this project.
+    Missing configuration becomes a task comment plus one task-list entry.
     """
     lines: List[str] = []
 
@@ -233,7 +275,12 @@ def _emit_timestamp_mapping(module: ResolvedRealModule) -> List[str]:
     if tag:
         lines.append(f"{_module_prefix(module.module_name)}.sTimestamp := {tag};")
     else:
-        lines.append("// TODO_CODEGEN: configure module timestamp tag")
+        lines.append(
+            tasklist.make_st_comment(
+                plc_path=f"SecopMapFromPlc.{module.module_name}.timestamp",
+                message=f"Configure module timestamp mapping for {module.module_name}.",
+            )
+        )
     lines.append("")
 
     return lines
@@ -328,6 +375,7 @@ def _emit_one_custom_parameter_mapping(
     module: ResolvedRealModule,
     cp: ResolvedCustomParameter,
     cp_plc: ResolvedRealCustomParameterPlc | None,
+    tasklist: TaskList,
 ) -> List[str]:
     """
     Emit mapping for one customised parameter.
@@ -348,8 +396,14 @@ def _emit_one_custom_parameter_mapping(
             lines.append(f"{lhs} := {expr};")
         else:
             lines.append(
-                f"// TODO_CODEGEN: configure mapping for customised parameter {cp.secop_name} "
-                f"(missing x-plc.custom_parameters.{cp.secop_name}.read_expr)"
+                tasklist.make_st_comment(
+                    plc_path=f"SecopMapFromPlc.{module.module_name}.{cp.secop_name}",
+                    message=(
+                        f"Configure mapping for customised parameter {cp.secop_name} "
+                        f"of module {module.module_name} "
+                        f"(missing x-plc.custom_parameters.{cp.secop_name}.read_expr)."
+                    ),
+                )
             )
         lines.append("")
         return lines
@@ -361,26 +415,40 @@ def _emit_one_custom_parameter_mapping(
         if enum_tag and members:
             lines.append(f"CASE {enum_tag} OF")
             for member_name, member_value in members:
-                lines.append(
-                    f" {member_value}: {lhs} := {cp.plc_type}.{member_name};"
-                )
+                lines.append(f" {member_value}: {lhs} := {cp.plc_type}.{member_name};")
             lines.append("END_CASE")
         else:
             lines.append(
-                f"// TODO_CODEGEN: configure enum mapping for customised parameter {cp.secop_name} "
-                f"(missing x-plc.custom_parameters.{cp.secop_name}.enum_tag)"
+                tasklist.make_st_comment(
+                    plc_path=f"SecopMapFromPlc.{module.module_name}.{cp.secop_name}",
+                    message=(
+                        f"Configure enum mapping for customised parameter "
+                        f"{cp.secop_name} of module {module.module_name} "
+                        f"(missing x-plc.custom_parameters.{cp.secop_name}.enum_tag)."
+                    ),
+                )
             )
         lines.append("")
         return lines
 
     lines.append(
-        f"// TODO_CODEGEN: manual implementation required for customised parameter {cp.secop_name}"
+        tasklist.make_st_comment(
+            plc_path=f"SecopMapFromPlc.{module.module_name}.{cp.secop_name}",
+            message=(
+                f"Manual mapping is required for customised parameter {cp.secop_name} "
+                f"of module {module.module_name} because its type is not supported "
+                "by automatic generation."
+            ),
+        )
     )
     lines.append("")
     return lines
 
 
-def _emit_custom_parameters(module: ResolvedRealModule) -> List[str]:
+def _emit_custom_parameters(
+    module: ResolvedRealModule,
+    tasklist: TaskList,
+) -> List[str]:
     """
     Emit mappings for all resolved customised parameters of one real module.
     """
@@ -388,7 +456,7 @@ def _emit_custom_parameters(module: ResolvedRealModule) -> List[str]:
 
     for cp in module.custom_parameters:
         cp_plc = module.x_plc_custom_parameters.get(cp.secop_name)
-        lines.extend(_emit_one_custom_parameter_mapping(module, cp, cp_plc))
+        lines.extend(_emit_one_custom_parameter_mapping(module, cp, cp_plc, tasklist))
 
     return lines
 
@@ -396,6 +464,7 @@ def _emit_custom_parameters(module: ResolvedRealModule) -> List[str]:
 def _emit_module_mapping(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
+    tasklist: TaskList,
 ) -> List[str]:
     """
     Emit the full PLC-to-SECoP mapping block for one real module.
@@ -406,12 +475,12 @@ def _emit_module_mapping(
     lines.append("// -----------------------------------------------------------------")
     lines.append("")
 
-    lines.extend(_emit_value_mapping(module, resolved_classes))
-    lines.extend(_emit_target_change_interlock(module))
-    lines.extend(_emit_timestamp_mapping(module))
+    lines.extend(_emit_value_mapping(module, resolved_classes, tasklist))
+    lines.extend(_emit_target_change_interlock(module, tasklist))
+    lines.extend(_emit_timestamp_mapping(module, tasklist))
     lines.extend(_emit_clear_errors_reset(module))
     lines.extend(_emit_status_block(module))
-    lines.extend(_emit_custom_parameters(module))
+    lines.extend(_emit_custom_parameters(module, tasklist))
 
     return lines
 
@@ -419,6 +488,7 @@ def _emit_module_mapping(
 def emit_prg_secop_map_from_plc(
     resolved_real_modules: ResolvedRealModules,
     resolved_module_classes: ResolvedModuleClasses,
+    tasklist: TaskList,
 ) -> str:
     """
     Emit full ST source for PROGRAM SecopMapFromPlc.
@@ -427,13 +497,14 @@ def emit_prg_secop_map_from_plc(
 
     lines.extend(_emit_program_header())
     lines.extend(_emit_call_secop_init())
-    lines.extend(_emit_sec_node_mapping(resolved_real_modules))
+    lines.extend(_emit_sec_node_mapping(resolved_real_modules, tasklist))
 
     for module_name in resolved_real_modules.sec_node.module_names_in_order:
         lines.extend(
             _emit_module_mapping(
                 resolved_real_modules.modules[module_name],
                 resolved_module_classes,
+                tasklist,
             )
         )
 

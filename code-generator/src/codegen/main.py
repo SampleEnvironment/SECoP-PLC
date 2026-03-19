@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from codegen.model.secnode import SecNodeConfig
+from codegen.tasklist import TaskList
 from codegen.validators.validate_config import validate_config, build_report, has_errors
 
 # ST code emitters
@@ -28,10 +29,9 @@ def parse_args() -> argparse.Namespace:
     Parse CLI arguments.
 
     Why this exists:
-    - the tool can be run from terminal or from an IDE with parameters,
-    - the program stays independent from hard-coded file paths,
-    - the same entry point can be reused for different input configs and output
-      folders.
+    - it allows running the tool from terminal or IDE with explicit parameters
+    - it avoids hard-coded file paths
+    - it keeps the same entry point reusable for different configs and outputs
 
     Example:
         python -m codegen.main --config inputs/secnodeplc_demo_config.json --out outputs/runs/dev
@@ -40,8 +40,8 @@ def parse_args() -> argparse.Namespace:
         prog="secop-plc-codegen",
         description=(
             "Load and validate a SECoP node config (JSON), produce a normalised "
-            "version, resolve PLC-oriented intermediate models, and generate "
-            "PLC Structured Text artefacts if no validation errors exist."
+            "version, and generate PLC Structured Text artefacts if no "
+            "validation errors exist."
         ),
     )
 
@@ -60,63 +60,30 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _build_structure_report_json_from_raw(raw_cfg: dict) -> str:
-    """
-    Build the structure report JSON that will later be exposed by the SEC node
-    in response to the SECoP 'describe' command.
-
-    Important design choice:
-    - this report is built from the raw configuration,
-    - not from the normalised Pydantic dump.
-
-    Reason:
-    the protocol-facing describe structure should reflect the user-provided
-    SECoP structure without extra optional fields introduced by normalization
-    with null values.
-    """
-    def _deep_remove_x_plc(obj):
-        if isinstance(obj, dict):
-            return {
-                key: _deep_remove_x_plc(value)
-                for key, value in obj.items()
-                if key != "x-plc"
-            }
-        if isinstance(obj, list):
-            return [_deep_remove_x_plc(item) for item in obj]
-        return obj
-
-    without_x_plc = _deep_remove_x_plc(raw_cfg)
-    return json.dumps(without_x_plc, ensure_ascii=False, separators=(",", ":"))
-
-
 def main() -> int:
     """
-    Main code-generation pipeline.
+    Main code generation pipeline.
 
-    Current pipeline
-    ----------------
+    Current pipeline:
     0) Parse CLI arguments
     1) Load the input JSON file into a raw Python dict
-    2) Validate and normalise it with Pydantic
+    2) Validate + normalise it with Pydantic
     3) Run business-rule validation and write a validation report
-    4) Resolve module-class data used by class-based ST artefacts
-    5) Resolve real-module / SEC-node data used mainly by PRGs
+    4) Resolve module-class data used by ST artefacts generated per module class
+    5) Resolve real-module / SECoP-node data used by PRGs and other instance logic
     6) Generate PLC Structured Text files
+    7) Generate a task list for manual PLC integration work
 
-    Architectural note
-    ------------------
-    Two resolved views of the configuration are kept:
+    Architectural note:
+    - two resolved views are kept:
+      * module classes:
+          used for ST types, FB_Module_<class>, FB_SecopProcessModules
+      * real modules:
+          used for PRGs such as SecopInit, SecopMapFromPlc and SecopMapToPlc
 
-    - module classes:
-        used for ST types, enum DUTs, FB_Module_<class>, FB_SecopProcessModules
-
-    - real modules:
-        used for PRGs such as SecopInit, SecopMapFromPlc and SecopMapToPlc
-
-    Scope note
-    ----------
-    At this stage the tool generates Structured Text only.
-    PLCopenXML generation will come later from the same validated/resolved data.
+    Scope note:
+    - this stage generates ST only
+    - PLCopenXML generation may come later from the same validated/resolved data
     """
     args = parse_args()
 
@@ -144,14 +111,11 @@ def main() -> int:
         print(e)
         return 2
 
+    # Write raw input for traceability/debugging.
     (out_dir / "raw_config.json").write_text(
         json.dumps(raw, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-
-    # Build the protocol-facing structure report from the raw config before
-    # any normalization adds explicit null-valued optional fields.
-    structure_report_json = _build_structure_report_json_from_raw(raw)
 
     # ------------------------------------------------------------------
     # 2) Validate + normalise with Pydantic
@@ -211,9 +175,9 @@ def main() -> int:
     # ------------------------------------------------------------------
     try:
         resolved_real_modules = resolve_real_modules(
+            raw_cfg=raw,
             normalized_cfg=normalized_dict,
             resolved_classes=resolved,
-            structure_report_json=structure_report_json,
         )
     except ValueError as e:
         print("ERROR: failed to resolve real-module data")
@@ -231,26 +195,24 @@ def main() -> int:
     # ------------------------------------------------------------------
     # 6) Generate PLC Structured Text artefacts
     # ------------------------------------------------------------------
-    # Current generated artefacts:
-    # - GVL_SecNode.st
-    # - ST_Module_<class>.st and ET_Module_<class>_... .st inside st/modules/
-    # - FB_SecopProcessModules.st
-    # - one FB_Module_<class>.st per module class inside st/modules/
-    # - SecopInit.st
-    # - SecopMapFromPlc.st
-    # - SecopMapToPlc.st
+    # The task list is filled while emitters generate TODO_CODEGEN markers.
+    tasklist = TaskList()
+
     st_gvl = emit_gvl_secnode(resolved)
     st_fb_process_modules = emit_fb_process_modules(resolved)
-    st_secop_init = emit_prg_secop_init(resolved_real_modules)
+    st_secop_init = emit_prg_secop_init(resolved_real_modules, tasklist)
     st_secop_map_from_plc = emit_prg_secop_map_from_plc(
         resolved_real_modules,
         resolved,
+        tasklist,
     )
     st_secop_map_to_plc = emit_prg_secop_map_to_plc(
         resolved_real_modules,
         resolved,
+        tasklist,
     )
 
+    # Write ST files
     out_st_dir = out_dir / "st"
     out_st_dir.mkdir(parents=True, exist_ok=True)
 
@@ -260,11 +222,19 @@ def main() -> int:
     (out_st_dir / "SecopMapFromPlc.st").write_text(st_secop_map_from_plc, encoding="utf-8")
     (out_st_dir / "SecopMapToPlc.st").write_text(st_secop_map_to_plc, encoding="utf-8")
 
-    # Generate one ST type file per module class and enum DUT file when needed.
+    # Generate one ST type file per resolved module class and per enum DUT.
     emit_all_module_types(resolved.classes, out_st_dir)
 
     # Generate one FB_Module_<class>.st file per resolved module class.
     emit_all_fb_modules(resolved.classes, out_st_dir)
+
+    # ------------------------------------------------------------------
+    # 7) Write task list
+    # ------------------------------------------------------------------
+    (out_dir / "tasklist.json").write_text(
+        json.dumps(tasklist.to_list(), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     print("ST generation done.")
     print("wrote:", str(out_st_dir / "GVL_SecNode.st"))
@@ -273,6 +243,7 @@ def main() -> int:
     print("wrote:", str(out_st_dir / "SecopMapFromPlc.st"))
     print("wrote:", str(out_st_dir / "SecopMapToPlc.st"))
     print("wrote:", str(out_st_dir / "modules"))
+    print("wrote:", str(out_dir / "tasklist.json"))
 
     return 0
 

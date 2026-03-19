@@ -60,6 +60,7 @@ from codegen.resolve.types import (
     ResolvedModuleClasses,
 )
 
+import json
 
 # ---------------------------------------------------------------------------
 # Dataclasses
@@ -289,6 +290,39 @@ def _int_or_none(value: Any) -> int | None:
         return None
     return int(value)
 
+def _deep_remove_x_plc(obj):
+    """
+    Recursively remove all 'x-plc' keys from a nested structure.
+
+    This is used to build the SECoP structure report that must not contain
+    any PLC-specific configuration.
+
+    Supported structures:
+    - dict
+    - list
+    - scalar values (returned as-is)
+    """
+    if isinstance(obj, dict):
+        return {
+            key: _deep_remove_x_plc(value)
+            for key, value in obj.items()
+            if key != "x-plc"
+        }
+
+    if isinstance(obj, list):
+        return [_deep_remove_x_plc(item) for item in obj]
+
+    return obj
+
+def _build_structure_report_json(cfg: dict[str, Any]) -> str:
+    """
+    Build the JSON string used as SECoP structure report.
+
+    The structure report must reflect the original SECoP-facing configuration
+    and must not include any project-specific 'x-plc' sections.
+    """
+    without_x_plc = _deep_remove_x_plc(cfg)
+    return json.dumps(without_x_plc, ensure_ascii=False, separators=(",", ":"))
 
 # ---------------------------------------------------------------------------
 # Per-module resolver
@@ -473,25 +507,30 @@ def _resolve_one_real_module(
 
 
 def resolve_real_modules(
+    raw_cfg: dict[str, Any],
     normalized_cfg: dict[str, Any],
     resolved_classes: ResolvedModuleClasses,
-    structure_report_json: str,
 ) -> ResolvedRealModules:
     """
-    Resolve a common model for real modules and SEC node.
+    Resolve a common model for real modules and sec node.
 
-    Parameters
-    ----------
-    normalized_cfg:
-        Normalized configuration used to resolve internal data consistently.
+    Inputs:
+    - raw_cfg:
+        original input JSON loaded from file.
+        It is used for building structure_report_json so that the generated
+        SECoP structure report matches the original configuration more closely
+        and does not include normalised null fields that were not explicitly
+        present in the source file.
+    - normalized_cfg:
+        validated and normalised configuration used for the rest of the
+        resolved model.
+    - resolved_classes:
+        class-level resolved information.
 
-    resolved_classes:
-        Module-class resolved model produced earlier in the pipeline.
-
-    structure_report_json:
-        Protocol-facing structure report already prepared from the raw config.
-        This is passed in explicitly so that this resolver does not rebuild it
-        from normalized data.
+    This model is intended to be reused by:
+    - SecopInit
+    - SecopMapFromPlc
+    - SecopMapToPlc
     """
     modules_cfg = normalized_cfg.get("modules") or {}
     if not isinstance(modules_cfg, dict):
@@ -499,21 +538,21 @@ def resolve_real_modules(
 
     x_plc_node = normalized_cfg.get("x-plc") or {}
     if not isinstance(x_plc_node, dict):
-        x_plc_node = {}
+        raise ValueError("normalized_cfg['x-plc'] must be a dict")
 
     tcp_cfg = x_plc_node.get("tcp") or {}
     if not isinstance(tcp_cfg, dict):
-        tcp_cfg = {}
+        raise ValueError("normalized_cfg['x-plc']['tcp'] must be a dict")
 
     sec_node = ResolvedRealSecNode(
         firmware=str(normalized_cfg.get("firmware") or ""),
-        secop_version=_strip_or_none(x_plc_node.get("secop_version")),
-        tcp_server_ip=_strip_or_none(tcp_cfg.get("server_ip")),
-        tcp_server_port=_int_or_none(tcp_cfg.get("server_port")),
-        plc_timestamp_tag=_strip_or_none(x_plc_node.get("plc_timestamp_tag")),
-        tcp_server_interface_healthy_tag=_strip_or_none(tcp_cfg.get("interface_healthy_tag")),
+        secop_version=str(x_plc_node.get("secop_version") or "") or None,
+        tcp_server_ip=str(tcp_cfg.get("server_ip") or "") or None,
+        tcp_server_port=int(tcp_cfg["server_port"]) if tcp_cfg.get("server_port") is not None else None,
+        plc_timestamp_tag=str(x_plc_node.get("plc_timestamp_tag") or "") or None,
+        tcp_server_interface_healthy_tag=str(tcp_cfg.get("interface_healthy_tag") or "") or None,
         module_names_in_order=list(modules_cfg.keys()),
-        structure_report_json=structure_report_json,
+        structure_report_json=_build_structure_report_json(raw_cfg),
     )
 
     modules: dict[str, ResolvedRealModule] = {}

@@ -339,7 +339,7 @@ def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> List[Finding]:
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles.{acc}",
                         message=(
-                            f"Accessible '{acc}' is not allowed for interface "
+                            f"Accessible '{acc}' is not allowed or implemented on current PLC SEC node for interface "
                             f"class '{cls}'."
                         ),
                     )
@@ -741,7 +741,7 @@ def rule_string_requires_maxchars(cfg: SecNodeConfig) -> List[Finding]:
                             severity=Severity.ERROR,
                             path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.maxchars",
                             message=(
-                                "datainfo.maxchars is required (>0) when "
+                                "On PLC SEC node datainfo.maxchars is required (>0) when "
                                 "datainfo.type == 'string'."
                             ),
                         )

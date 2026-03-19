@@ -4,7 +4,7 @@ ST generator for PROGRAM SecopMapToPlc.
 This PRG:
 - applies SECoP target values to PLC hardware
 - applies clear_errors commands
-- clears the SEC node error report when any module clear_errors command is active
+- clears SEC node error report when any module clear_errors command is active
 
 Inputs
 ------
@@ -17,8 +17,8 @@ Design notes
 ------------
 - This emitter only formats Structured Text.
 - Structural applicability is decided earlier in the resolve layer.
-- Missing PLC mapping details do not generate invalid ST. When a concept applies
-  but its configuration is missing, the emitter writes TODO_CODEGEN comments.
+- Whenever a target-write mapping cannot be generated automatically, this
+  emitter generates a TASK comment in ST and adds an entry to the task list.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from codegen.resolve.real_modules import (
     ResolvedRealModules,
 )
 from codegen.resolve.types import ResolvedModuleClasses
+from codegen.tasklist import TaskList
 
 
 def _module_prefix(module_name: str) -> str:
@@ -44,10 +45,7 @@ def _resolved_enum_members(
     resolved_classes: ResolvedModuleClasses,
 ) -> list[tuple[str, int]]:
     """
-    Return enum members for a real module using its resolved module class.
-
-    Returned format:
-        [(member_name, member_value), ...]
+    Return enum members for a real module using its module class.
     """
     resolved_class = resolved_classes.classes[module.module_class_name]
     if not resolved_class.value.members:
@@ -57,29 +55,30 @@ def _resolved_enum_members(
 
 def _is_drivable(module: ResolvedRealModule) -> bool:
     """
-    Return True when the real module belongs to the Drivable interface class.
+    Return True when the real module uses the Drivable interface class.
     """
     return module.interface_class == "Drivable"
 
 
 def _is_writable_not_drivable(module: ResolvedRealModule) -> bool:
     """
-    Return True for Writable modules that are not Drivable.
+    Return True when the real module is Writable but not Drivable.
     """
     return module.interface_class == "Writable"
 
 
 def _needs_rtrig(module: ResolvedRealModule) -> bool:
     """
-    Drivable modules use a rising-edge trigger to start target application.
+    Drivable modules apply targets through a state transition, so they need a
+    rising-edge detector.
     """
     return _is_drivable(module)
 
 
 def _needs_num_monitor(module: ResolvedRealModule) -> bool:
     """
-    Writable non-Drivable numeric/enum targets use FB_MonitorNumValue to detect
-    target changes.
+    Writable non-drivable modules monitor the SECoP target variable to detect
+    changes that should be written to hardware.
     """
     return _is_writable_not_drivable(module) and (
         module.value_is_numeric or module.value_is_enum
@@ -88,15 +87,14 @@ def _needs_num_monitor(module: ResolvedRealModule) -> bool:
 
 def _needs_small_string_monitor(module: ResolvedRealModule) -> bool:
     """
-    Writable non-Drivable string targets use FB_MonitorSmallString to detect
-    target changes.
+    Writable non-drivable string modules use a small-string monitor FB.
     """
     return _is_writable_not_drivable(module) and module.value_is_string
 
 
 def _emit_var_block(resolved_real_modules: ResolvedRealModules) -> List[str]:
     """
-    Emit the PROGRAM header and internal helper FB instances.
+    Emit the PROGRAM declaration and internal helper FB instances.
     """
     lines: List[str] = []
 
@@ -123,9 +121,9 @@ def _emit_var_block(resolved_real_modules: ResolvedRealModules) -> List[str]:
 
 def _target_monitor_input_expr(module: ResolvedRealModule) -> str:
     """
-    Build the i_rVar expression for FB_MonitorNumValue.
+    Build the i_rVar expression used by FB_MonitorNumValue.
 
-    Conversion rules:
+    Rules:
     - enum  -> INT_TO_REAL(...)
     - LREAL -> LREAL_TO_REAL(...)
     - DINT  -> DINT_TO_REAL(...)
@@ -142,21 +140,18 @@ def _target_monitor_input_expr(module: ResolvedRealModule) -> str:
         return f"DINT_TO_REAL({pfx}.{module.value_var_prefix}Target)"
 
     raise ValueError(
-        f"Unsupported numeric target monitor conversion for module {module.module_name} "
-        f"with PLC type {module.value_plc_type}"
+        f"Unsupported numeric target monitor conversion for module "
+        f"{module.module_name} with plc type {module.value_plc_type}"
     )
 
 
 def _emit_drivable_apply_target_block(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
+    tasklist: TaskList,
 ) -> List[str]:
     """
-    Emit target application logic for Drivable modules.
-
-    Supported patterns:
-    - numeric / string target -> x-plc.target.write_stmt
-    - enum target             -> x-plc.target.enum_tag
+    Emit target-application logic for one Drivable module.
     """
     lines: List[str] = []
     pfx = _module_prefix(module.module_name)
@@ -175,7 +170,17 @@ def _emit_drivable_apply_target_block(
         if write_stmt:
             lines.append(f" {write_stmt};")
         else:
-            lines.append(" // TODO_CODEGEN: configure target write statement (missing x-plc.target.write_stmt)")
+            lines.append(
+                " "
+                + tasklist.make_st_comment(
+                    plc_path=f"SecopMapToPlc.{module.module_name}.target",
+                    message=(
+                        f"Configure target write statement for module "
+                        f"{module.module_name} (Drivable, missing "
+                        f"x-plc.target.write_stmt)."
+                    ),
+                )
+            )
 
     elif module.value_is_enum:
         enum_tag = module.x_plc_target.enum_tag if module.x_plc_target else None
@@ -189,10 +194,30 @@ def _emit_drivable_apply_target_block(
                 )
             lines.append(" END_CASE")
         else:
-            lines.append(" // TODO_CODEGEN: configure enum target write mapping (missing x-plc.target.enum_tag)")
+            lines.append(
+                " "
+                + tasklist.make_st_comment(
+                    plc_path=f"SecopMapToPlc.{module.module_name}.target",
+                    message=(
+                        f"Configure enum target write mapping for module "
+                        f"{module.module_name} (Drivable, missing "
+                        f"x-plc.target.enum_tag)."
+                    ),
+                )
+            )
 
     else:
-        lines.append(" // TODO_CODEGEN: manual implementation required for unsupported Drivable target type")
+        lines.append(
+            " "
+            + tasklist.make_st_comment(
+                plc_path=f"SecopMapToPlc.{module.module_name}.target",
+                message=(
+                    f"Manual target write implementation is required for module "
+                    f"{module.module_name} because its target type is not "
+                    "supported by automatic generation."
+                ),
+            )
+        )
 
     lines.append(f" {pfx}.stStatus.etCode := SECOP.ET_StatusCode.Busy;")
     lines.append(f" {pfx}.stStatus.sDescription := 'BUSY';")
@@ -209,14 +234,10 @@ def _emit_drivable_apply_target_block(
 def _emit_writable_apply_target_block(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
+    tasklist: TaskList,
 ) -> List[str]:
     """
-    Emit target application logic for Writable non-Drivable modules.
-
-    Supported patterns:
-    - numeric target -> x-plc.target.write_stmt
-    - string target  -> x-plc.target.write_stmt
-    - enum target    -> x-plc.target.enum_tag
+    Emit target-application logic for one Writable non-drivable module.
     """
     lines: List[str] = []
     pfx = _module_prefix(module.module_name)
@@ -237,7 +258,17 @@ def _emit_writable_apply_target_block(
             if write_stmt:
                 lines.append(f" {write_stmt};")
             else:
-                lines.append(" // TODO_CODEGEN: configure target write statement (missing x-plc.target.write_stmt)")
+                lines.append(
+                    " "
+                    + tasklist.make_st_comment(
+                        plc_path=f"SecopMapToPlc.{module.module_name}.target",
+                        message=(
+                            f"Configure target write statement for module "
+                            f"{module.module_name} (Writable, missing "
+                            f"x-plc.target.write_stmt)."
+                        ),
+                    )
+                )
 
         elif module.value_is_enum:
             enum_tag = module.x_plc_target.enum_tag if module.x_plc_target else None
@@ -251,39 +282,63 @@ def _emit_writable_apply_target_block(
                     )
                 lines.append(" END_CASE")
             else:
-                lines.append(" // TODO_CODEGEN: configure enum target write mapping (missing x-plc.target.enum_tag)")
+                lines.append(
+                    " "
+                    + tasklist.make_st_comment(
+                        plc_path=f"SecopMapToPlc.{module.module_name}.target",
+                        message=(
+                            f"Configure enum target write mapping for module "
+                            f"{module.module_name} (Writable, missing "
+                            f"x-plc.target.enum_tag)."
+                        ),
+                    )
+                )
 
         lines.append("END_IF")
         lines.append("")
         return lines
 
     if _needs_small_string_monitor(module):
-        lines.append(
-            f"fbMonitorSmallString_{module.module_name}(i_sVar:= {pfx}.sTarget);"
-        )
+        lines.append(f"fbMonitorSmallString_{module.module_name}(i_sVar:= {pfx}.sTarget);")
         lines.append(f"IF fbMonitorSmallString_{module.module_name}.q_xHasChanged THEN")
 
         write_stmt = module.x_plc_target.write_stmt if module.x_plc_target else None
         if write_stmt:
             lines.append(f" {write_stmt};")
         else:
-            lines.append(" // TODO_CODEGEN: configure target write statement (missing x-plc.target.write_stmt)")
+            lines.append(
+                " "
+                + tasklist.make_st_comment(
+                    plc_path=f"SecopMapToPlc.{module.module_name}.target",
+                    message=(
+                        f"Configure target write statement for module "
+                        f"{module.module_name} (Writable string target, missing "
+                        f"x-plc.target.write_stmt)."
+                    ),
+                )
+            )
 
         lines.append("END_IF")
         lines.append("")
         return lines
 
-    lines.append("// TODO_CODEGEN: manual implementation required for Writable target monitoring")
+    lines.append(
+        tasklist.make_st_comment(
+            plc_path=f"SecopMapToPlc.{module.module_name}.target",
+            message=(
+                f"Manual target monitoring/write implementation is required for "
+                f"module {module.module_name} because its target type is not "
+                "supported by automatic generation."
+            ),
+        )
+    )
     lines.append("")
     return lines
 
 
 def _emit_apply_clear_errors_block(module: ResolvedRealModule) -> List[str]:
     """
-    Emit application of the standard clear_errors command.
-
-    Even when no extra PLC command statement is configured, the SECoP-side
-    error-report fields are still cleared.
+    Emit the hardware-side application of the clear_errors command.
     """
     lines: List[str] = []
     pfx = _module_prefix(module.module_name)
@@ -298,7 +353,7 @@ def _emit_apply_clear_errors_block(module: ResolvedRealModule) -> List[str]:
     lines.append(f" {pfx}.stErrorReport.sDescription := '';")
 
     cmd_stmt = module.x_plc_clear_errors.cmd_stmt if module.x_plc_clear_errors else None
-    if cmd_stmt:
+    if isinstance(cmd_stmt, str) and cmd_stmt.strip():
         lines.append(f" {cmd_stmt};")
 
     lines.append("END_IF")
@@ -310,6 +365,7 @@ def _emit_apply_clear_errors_block(module: ResolvedRealModule) -> List[str]:
 def _emit_module_block(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
+    tasklist: TaskList,
 ) -> List[str]:
     """
     Emit the full SECoP-to-PLC mapping block for one real module.
@@ -320,8 +376,8 @@ def _emit_module_block(
     lines.append("// -----------------------------------------------------------------")
     lines.append("")
 
-    lines.extend(_emit_drivable_apply_target_block(module, resolved_classes))
-    lines.extend(_emit_writable_apply_target_block(module, resolved_classes))
+    lines.extend(_emit_drivable_apply_target_block(module, resolved_classes, tasklist))
+    lines.extend(_emit_writable_apply_target_block(module, resolved_classes, tasklist))
     lines.extend(_emit_apply_clear_errors_block(module))
 
     return lines
@@ -331,8 +387,8 @@ def _emit_sec_node_clear_errors_block(
     resolved_real_modules: ResolvedRealModules,
 ) -> List[str]:
     """
-    Emit the SEC node error-report reset when any module clear_errors command is
-    active.
+    Emit the SEC node-level clear_errors reset when any module clear_errors
+    command is active.
     """
     lines: List[str] = []
 
@@ -342,7 +398,7 @@ def _emit_sec_node_clear_errors_block(
         if m.has_clear_errors_command
     ]
 
-    lines.append("// SEC Node")
+    lines.append("// SEC node")
     lines.append("// -----------------------------------------------------------------")
     lines.append("")
 
@@ -372,6 +428,7 @@ def _emit_sec_node_clear_errors_block(
 def emit_prg_secop_map_to_plc(
     resolved_real_modules: ResolvedRealModules,
     resolved_module_classes: ResolvedModuleClasses,
+    tasklist: TaskList,
 ) -> str:
     """
     Emit full ST source for PROGRAM SecopMapToPlc.
@@ -385,6 +442,7 @@ def emit_prg_secop_map_to_plc(
             _emit_module_block(
                 resolved_real_modules.modules[module_name],
                 resolved_module_classes,
+                tasklist,
             )
         )
 
