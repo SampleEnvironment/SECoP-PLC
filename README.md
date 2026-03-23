@@ -76,7 +76,11 @@ If the CODESYS library evolves beyond the version supported by the code generato
    Remote repository: https://github.com/SampleEnvironment/SECoP-PLC
 4. **Clone the remote repository and work from there**
 
-Once the library has been updated, update its version number and tick the 'Release' box on the 'Project Information' settings, and commit/push the new version describing the modifications on the changes log
+Once the library project has been updated:
+
+1. Update its version number and tick the 'Release' box on the 'Project Information' settings
+2. Commit/push the new version describing the modifications on the changes log
+3. Save .library to releases/codesys_library
 
 ---
 
