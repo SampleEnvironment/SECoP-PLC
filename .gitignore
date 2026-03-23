@@ -35,3 +35,9 @@ project/**/*.theirs
 !/code-generator/**
 !code-generator
 !code-generator/**
+
+# Allow releases folder
+!/releases
+!/releases/**
+!releases
+!releases/**
