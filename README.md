@@ -14,11 +14,6 @@ This repository currently contains two main parts:
 CODESYS project containing the base PLC SEC Node library.  
 To be managed from the CODESYS IDE only, using its Git integration.
 
-To work on the library:
-- open the project from the CODESYS IDE
-- configure Git inside the IDE
-- clone the remote repository and work from there
-
 ### `code-generator/`
 Python-based code generator for creating PLC code automatically from a user configuration file.
 
@@ -73,9 +68,15 @@ If the CODESYS library evolves beyond the version supported by the code generato
 
 ## 3. Steps required to update the CODESYS library
 
-TBD
+1. **Open the project from the CODESYS IDE**
+2. **Configure Git inside the IDE**
+   
+   Local repository: Select an empty directory
+   
+   Remote repository: https://github.com/SampleEnvironment/SECoP-PLC
+4. **Clone the remote repository and work from there**
 
-...
+Once the library has been updated, update its version number and tick the 'Release' box on the 'Project Information' settings, and commit/push the new version describing the modifications on the changes log
 
 ---
 
