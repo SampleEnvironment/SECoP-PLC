@@ -110,6 +110,7 @@ Once the library project has been updated:
 
 5. **Import the generated outputs into the PLC project**
    - Import all generated PLCopenXML files containing the SEC Node code into the PLC project.
+   - Add POU calls to PLC Task Configuration, in this order: `SecopMapFromPlc`, `SECOP.Server`, `SecopMapToPlc`
 
 6. **Complete the remaining PLC implementation using the task list**
    - Use the generated task list to complete the remaining pieces of code.
