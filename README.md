@@ -118,7 +118,7 @@ Once the library project has been updated:
 
 7. **Build the project**
    - Clean all
-   - Build all
+   - Build project
    - Check for SECoP library version warnings
 
 8. **Test the SEC Node**
