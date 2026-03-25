@@ -39,7 +39,7 @@ Severity model
 
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict
+from typing import Any
 
 
 class Severity(str, Enum):
@@ -90,7 +90,7 @@ class Finding:
     path: str
     message: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert the finding into a JSON-serialisable dictionary.
 

@@ -15,12 +15,12 @@ Design notes
 
 from __future__ import annotations
 
-from typing import List
 
 from codegen.resolve.types import (
     ResolvedCustomParameter,
     ResolvedModuleClass,
 )
+from codegen.tasklist import TaskList
 
 
 # ---------------------------------------------------------
@@ -84,7 +84,7 @@ def _target_temp_var_type(resolved: ResolvedModuleClass) -> str:
     return resolved.value.plc_type
 
 
-def _emit_status_data_report(action_expr: str, accessible_expr: str) -> List[str]:
+def _emit_status_data_report(action_expr: str, accessible_expr: str) -> list[str]:
     """
     Emit the standard status data-report sequence.
     """
@@ -98,7 +98,7 @@ def _emit_numeric_or_enum_data_report(
     action_expr: str,
     accessible_literal: str,
     data_expr: str,
-) -> List[str]:
+) -> list[str]:
     """
     Emit M_AddDataReportToReplyMessage for numeric or enum data.
     """
@@ -111,7 +111,7 @@ def _emit_string_data_report(
     action_expr: str,
     accessible_literal: str,
     raw_var_ref: str,
-) -> List[str]:
+) -> list[str]:
     """
     Emit JSON string encoding followed by a reply message.
     """
@@ -121,10 +121,24 @@ def _emit_string_data_report(
     ]
 
 
-def _emit_value_report_lines(action_expr: str, resolved: ResolvedModuleClass) -> List[str]:
+def _emit_value_report_lines(action_expr: str, resolved: ResolvedModuleClass, tasklist: TaskList, context: str = "") -> list[str]:
     """
     Emit report lines for accessibles.value.
+
+    For array/tuple value types a task comment is emitted instead of automatic
+    mapping code because the internal structure is open-ended.
+    context is used to distinguish between activate / read / update task entries.
     """
+    if resolved.value.is_array or resolved.value.is_tuple:
+        secop_type = "array" if resolved.value.is_array else "tuple"
+        suffix = f".{context}" if context else ""
+        return [
+            "  " + tasklist.make_st_comment(
+                plc_path=f"FB_Module_{resolved.name}.value_report{suffix}",
+                message=f"report 'value' — type '{secop_type}' has open-ended structure; implement encoding manually",
+            )
+        ]
+
     value_var = f"iq_{resolved.value.var_prefix}Value"
 
     if resolved.value.is_string:
@@ -137,7 +151,7 @@ def _emit_value_report_lines(action_expr: str, resolved: ResolvedModuleClass) ->
     )
 
 
-def _emit_target_report_lines(action_expr: str, resolved: ResolvedModuleClass) -> List[str]:
+def _emit_target_report_lines(action_expr: str, resolved: ResolvedModuleClass) -> list[str]:
     """
     Emit report lines for accessibles.target.
 
@@ -161,7 +175,8 @@ def _emit_target_report_lines(action_expr: str, resolved: ResolvedModuleClass) -
 def _emit_custom_parameter_report_lines(
     action_expr: str,
     cp: ResolvedCustomParameter,
-) -> List[str]:
+    tasklist: TaskList,
+) -> list[str]:
     """
     Emit report lines for one customised parameter.
     """
@@ -184,10 +199,19 @@ def _emit_custom_parameter_report_lines(
             data_expr=f"{_to_string_func_for_plc_type(cp.plc_type)}({raw_var})",
         )
 
+    if cp.is_array or cp.is_tuple:
+        secop_type = "array" if cp.is_array else "tuple"
+        return [
+            "  " + tasklist.make_st_comment(
+                plc_path=f"FB_Module.{cp.secop_name}_report",
+                message=f"report '{cp.secop_name}' — type '{secop_type}' has open-ended structure; implement encoding manually",
+            )
+        ]
+
     raise ValueError(f"Unsupported custom parameter type for {cp.secop_name}")
 
 
-def _emit_pollinterval_report_lines(action_expr: str) -> List[str]:
+def _emit_pollinterval_report_lines(action_expr: str) -> list[str]:
     """
     Emit report lines for accessibles.pollinterval.
     """
@@ -196,7 +220,7 @@ def _emit_pollinterval_report_lines(action_expr: str) -> List[str]:
     ]
 
 
-def _emit_all_parameter_reports(action_expr: str, resolved: ResolvedModuleClass) -> List[str]:
+def _emit_all_parameter_reports(action_expr: str, resolved: ResolvedModuleClass, tasklist: TaskList, context: str = "") -> list[str]:
     """
     Emit report lines for all readable parameters of the module.
 
@@ -211,23 +235,23 @@ def _emit_all_parameter_reports(action_expr: str, resolved: ResolvedModuleClass)
     - commands
     - target_limits
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.extend(_emit_status_data_report(action_expr, "'status'"))
-    lines.extend(_emit_value_report_lines(action_expr, resolved))
+    lines.extend(_emit_value_report_lines(action_expr, resolved, tasklist, context=context))
 
     if resolved.target is not None:
         lines.extend(_emit_target_report_lines(action_expr, resolved))
 
     for cp in resolved.custom_parameters:
-        lines.extend(_emit_custom_parameter_report_lines(action_expr, cp))
+        lines.extend(_emit_custom_parameter_report_lines(action_expr, cp, tasklist))
 
     lines.extend(_emit_pollinterval_report_lines(action_expr))
 
     return lines
 
 
-def _emit_read_parameter_chain(resolved: ResolvedModuleClass) -> List[str]:
+def _emit_read_parameter_chain(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
     """
     Emit the IF / ELSIF chain used inside 'read'.
 
@@ -238,14 +262,14 @@ def _emit_read_parameter_chain(resolved: ResolvedModuleClass) -> List[str]:
     - customised parameters
     - pollinterval
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("  // Prepare reply message: reply <module>:<parameter> <data-report>")
     lines.append("  IF i_sAccessible = 'status' THEN")
     lines.extend(_indent(_emit_status_data_report("i_sAction", "i_sAccessible"), 1))
 
     lines.append("  ELSIF i_sAccessible = 'value' THEN")
-    lines.extend(_indent(_emit_value_report_lines("i_sAction", resolved), 1))
+    lines.extend(_indent(_emit_value_report_lines("i_sAction", resolved, tasklist, context="read"), 1))
 
     if resolved.target is not None:
         lines.append("  ELSIF i_sAccessible = 'target' THEN")
@@ -253,7 +277,7 @@ def _emit_read_parameter_chain(resolved: ResolvedModuleClass) -> List[str]:
 
     for cp in resolved.custom_parameters:
         lines.append(f"  ELSIF i_sAccessible = '{cp.secop_name}' THEN")
-        lines.extend(_indent(_emit_custom_parameter_report_lines("i_sAction", cp), 1))
+        lines.extend(_indent(_emit_custom_parameter_report_lines("i_sAction", cp, tasklist), 1))
 
     lines.append("  ELSIF i_sAccessible = 'pollinterval' THEN")
     lines.extend(_indent(_emit_pollinterval_report_lines("i_sAction"), 1))
@@ -265,7 +289,7 @@ def _emit_read_parameter_chain(resolved: ResolvedModuleClass) -> List[str]:
     return lines
 
 
-def _indent(lines: List[str], level: int = 1) -> List[str]:
+def _indent(lines: list[str], level: int = 1) -> list[str]:
     """
     Light indentation helper used to keep generated code readable.
     """
@@ -279,7 +303,7 @@ def _build_target_range_condition(resolved: ResolvedModuleClass, temp_var: str) 
 
     Returns None if no target-range restrictions apply.
     """
-    checks: List[str] = []
+    checks: list[str] = []
     p = resolved.value.var_prefix
 
     if resolved.target is None:
@@ -357,11 +381,11 @@ def _build_limit_expr(resolved: ResolvedModuleClass, source_expr: str) -> str:
 # Header
 # ---------------------------------------------------------
 
-def emit_header_comments(resolved: ResolvedModuleClass) -> List[str]:
+def emit_header_comments(resolved: ResolvedModuleClass) -> list[str]:
     """
     Emit the function-block structure comment header.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("// ============================================================================")
     lines.append("// Function block structure:")
@@ -385,11 +409,11 @@ def emit_header_comments(resolved: ResolvedModuleClass) -> List[str]:
     return lines
 
 
-def emit_fb_header(resolved: ResolvedModuleClass) -> List[str]:
+def emit_fb_header(resolved: ResolvedModuleClass) -> list[str]:
     """
     Emit the FB header line including the correct base class.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     if resolved.interface_class == "Readable":
         base = "SECOP.FB_BaseModuleReadable"
@@ -410,15 +434,26 @@ def emit_fb_header(resolved: ResolvedModuleClass) -> List[str]:
 # VAR_IN_OUT
 # ---------------------------------------------------------
 
-def emit_var_in_out(resolved: ResolvedModuleClass) -> List[str]:
+def emit_var_in_out(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
     """
     Emit VAR_IN_OUT block for module-specific variables.
+
+    For open-ended types (array, tuple) no PLC type can be generated automatically.
+    A task comment is emitted instead, and the task is registered in the task list.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("VAR_IN_OUT")
     for var in resolved.module_variables:
-        lines.append(f" iq_{var.name}: {var.plc_type};")
+        if "(*TODO:" in var.plc_type:
+            lines.append(
+                " " + tasklist.make_st_comment(
+                    plc_path=f"FB_Module_{resolved.name}.{var.name}",
+                    message=f"declare variable for '{var.name[1:]}' — value type has open-ended structure (array or tuple); no automatic PLC type can be generated",
+                )
+            )
+        else:
+            lines.append(f" iq_{var.name}: {var.plc_type};")
     lines.append("END_VAR")
     lines.append("")
 
@@ -429,11 +464,11 @@ def emit_var_in_out(resolved: ResolvedModuleClass) -> List[str]:
 # VAR
 # ---------------------------------------------------------
 
-def emit_var_internal(resolved: ResolvedModuleClass) -> List[str]:
+def emit_var_internal(resolved: ResolvedModuleClass) -> list[str]:
     """
     Emit internal VAR block for FB_Module_<class>.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("VAR")
 
@@ -469,11 +504,11 @@ def emit_var_internal(resolved: ResolvedModuleClass) -> List[str]:
 # Common first block
 # ---------------------------------------------------------
 
-def emit_monitor_clients_round_block() -> List[str]:
+def emit_monitor_clients_round_block() -> list[str]:
     """
     Emit the block that monitors the start and end of a client round.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("// Monitor client round start and finish")
     lines.append("fbRtrigIsFirstClient(CLK:= i_xFirstSecopClient);")
@@ -487,8 +522,8 @@ def emit_monitor_clients_round_block() -> List[str]:
 # Out-of-range block
 # ---------------------------------------------------------
 
-def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]:
-    lines: List[str] = []
+def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> list[str]:
+    lines: list[str] = []
 
     value_prefix = resolved.value.var_prefix
     to_string_func = _to_string_func_for_plc_type(resolved.value.plc_type)
@@ -543,8 +578,8 @@ def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]
     return lines
 
 
-def _emit_enum_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]:
-    lines: List[str] = []
+def _emit_enum_out_of_range_block(resolved: ResolvedModuleClass) -> list[str]:
+    lines: list[str] = []
 
     if not resolved.value.is_enum or not resolved.value.members:
         return lines
@@ -574,7 +609,7 @@ def _emit_enum_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]:
     return lines
 
 
-def emit_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]:
+def emit_out_of_range_block(resolved: ResolvedModuleClass) -> list[str]:
     """
     Emit full out-of-range block when applicable.
     """
@@ -591,8 +626,8 @@ def emit_out_of_range_block(resolved: ResolvedModuleClass) -> List[str]:
 # SYNC block
 # ---------------------------------------------------------
 
-def _emit_sync_activate(resolved: ResolvedModuleClass) -> List[str]:
-    lines: List[str] = []
+def _emit_sync_activate(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
+    lines: list[str] = []
 
     lines.append(" // Activate updates: activate <module>")
     lines.append(" IF i_sAction = 'activate' THEN")
@@ -601,14 +636,14 @@ def _emit_sync_activate(resolved: ResolvedModuleClass) -> List[str]:
     lines.append("  M_UpdateSubscriberList(i_stClient:= i_stClientMonitored);")
     lines.append("  ")
     lines.append("  // Build reply message. Include all module accessibles")
-    lines.extend(_emit_all_parameter_reports("i_sAction", resolved))
+    lines.extend(_emit_all_parameter_reports("i_sAction", resolved, tasklist, context="activate"))
     lines.append("  IF i_sModuleRequested = iq_sName THEN M_AddUpdatesEndMessage(i_sAction := i_sAction); END_IF // End message")
 
     return lines
 
 
-def _emit_sync_deactivate() -> List[str]:
-    lines: List[str] = []
+def _emit_sync_deactivate() -> list[str]:
+    lines: list[str] = []
 
     lines.append("")
     lines.append(" // Deactivate updates: deactivate <module>")
@@ -620,20 +655,20 @@ def _emit_sync_deactivate() -> List[str]:
     return lines
 
 
-def _emit_sync_read(resolved: ResolvedModuleClass) -> List[str]:
-    lines: List[str] = []
+def _emit_sync_read(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
+    lines: list[str] = []
 
     lines.append("")
     lines.append(" // Read request: read <module>:<parameter>")
     lines.append(" ELSIF i_sAction = 'read' THEN")
     lines.append("  ")
-    lines.extend(_emit_read_parameter_chain(resolved))
+    lines.extend(_emit_read_parameter_chain(resolved, tasklist))
 
     return lines
 
 
-def _emit_numeric_change_target(resolved: ResolvedModuleClass) -> List[str]:
-    lines: List[str] = []
+def _emit_numeric_change_target(resolved: ResolvedModuleClass) -> list[str]:
+    lines: list[str] = []
 
     p = resolved.value.var_prefix
     temp_var = _target_temp_var_name(resolved)
@@ -688,8 +723,8 @@ def _emit_numeric_change_target(resolved: ResolvedModuleClass) -> List[str]:
     return lines
 
 
-def _emit_enum_change_target(resolved: ResolvedModuleClass) -> List[str]:
-    lines: List[str] = []
+def _emit_enum_change_target(resolved: ResolvedModuleClass) -> list[str]:
+    lines: list[str] = []
 
     lines.append("    IF NOT M_CheckIfDataIsNumeric(i_sDataToParse:= i_sData, i_xMustBeInteger:= TRUE) THEN // Unexpected data type")
     lines.append('     A_ReturnErrorWrongType(); // Return "WrongType" error')
@@ -737,8 +772,8 @@ def _emit_enum_change_target(resolved: ResolvedModuleClass) -> List[str]:
     return lines
 
 
-def _emit_sync_change(resolved: ResolvedModuleClass) -> List[str]:
-    lines: List[str] = []
+def _emit_sync_change(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
+    lines: list[str] = []
 
     lines.append("")
     lines.append(" // Change value: change <module>:<parameter> <value>")
@@ -760,7 +795,12 @@ def _emit_sync_change(resolved: ResolvedModuleClass) -> List[str]:
         elif resolved.value.is_enum:
             lines.extend(_emit_enum_change_target(resolved))
         else:
-            lines.append("    // TODO_CODEGEN: manual implementation required for target change on unsupported type")
+            lines.append(
+                "    " + tasklist.make_st_comment(
+                    plc_path=f"FB_Module_{resolved.name}.change_target",
+                    message="implement target change — value type has open-ended structure (array or tuple); no automatic mapping generated",
+                )
+            )
             lines.append("   END_IF")
 
         first_branch_started = True
@@ -773,7 +813,7 @@ def _emit_sync_change(resolved: ResolvedModuleClass) -> List[str]:
         lines.append("   A_HandlePollintervalChange(); // Handle polling interval change request")
         first_branch_started = True
 
-    readonly_names: List[str] = ["value", "status"]
+    readonly_names: list[str] = ["value", "status"]
     readonly_names.extend(cp.secop_name for cp in resolved.custom_parameters)
 
     if resolved.target is not None and resolved.target.has_limits:
@@ -801,11 +841,11 @@ def _emit_sync_change(resolved: ResolvedModuleClass) -> List[str]:
     return lines
 
 
-def _emit_stop_apply_new_target(resolved: ResolvedModuleClass) -> List[str]:
+def _emit_stop_apply_new_target(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
     """
     Emit the expression that applies the stop command target.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     p = resolved.value.var_prefix
 
@@ -821,12 +861,17 @@ def _emit_stop_apply_new_target(resolved: ResolvedModuleClass) -> List[str]:
         lines.append("     END_CASE")
         return lines
 
-    lines.append("     // TODO_CODEGEN: manual implementation required for stop command on unsupported type")
+    lines.append(
+        "     " + tasklist.make_st_comment(
+            plc_path=f"FB_Module_{resolved.name}.stop_target",
+            message="implement stop command target apply — value type has open-ended structure (array or tuple); no automatic mapping generated",
+        )
+    )
     return lines
 
 
-def _emit_sync_do(resolved: ResolvedModuleClass) -> List[str]:
-    lines: List[str] = []
+def _emit_sync_do(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
+    lines: list[str] = []
 
     lines.append("")
     lines.append(" // Execute command: do <module>:<command> <value> (where <value> is optional)")
@@ -851,7 +896,7 @@ def _emit_sync_do(resolved: ResolvedModuleClass) -> List[str]:
         lines.append("    ")
         lines.append("    ELSE // Execute stop command (target updated to current process value). Register client that made request. Initiates target drive state machine")
         lines.append("     iq_stTargetDrive.xStopCmd := TRUE;")
-        lines.extend(_emit_stop_apply_new_target(resolved))
+        lines.extend(_emit_stop_apply_new_target(resolved, tasklist))
         lines.append("     iq_stTargetDrive.stStopCmdClient.sIp := i_stClientMonitored.sIp;")
         lines.append("     iq_stTargetDrive.stStopCmdClient.uiPort := i_stClientMonitored.uiPort;")
         lines.append("     iq_stTargetDrive.uiState := 1;")
@@ -872,18 +917,28 @@ def _emit_sync_do(resolved: ResolvedModuleClass) -> List[str]:
         keyword = "  ELSIF" if first_branch_started else "  IF"
         lines.append(f"{keyword} i_sAccessible = '{cc.secop_name}' THEN")
         lines.append(f"   iq_{cc.plc_var_name} := TRUE; // Apply customised command")
-        lines.append(f"   // TODO_CODEGEN: implement customised command behaviour for '{cc.secop_name}'")
+        lines.append(
+            "   " + tasklist.make_st_comment(
+                plc_path=f"FB_Module_{resolved.name}.do_{cc.secop_name}",
+                message=f"implement behaviour for custom command '{cc.secop_name}'",
+            )
+        )
         lines.append("   M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction:= i_sAction, i_sAccessible:= i_sAccessible, i_sDataReport:= 'null');")
         first_branch_started = True
 
-    lines.append("  ELSE")
-    lines.append('   A_ReturnErrorNoSuchCommand();')
-    lines.append("  END_IF")
+    if first_branch_started:
+        # At least one command branch was opened — close with ELSE for unknown commands
+        lines.append("  ELSE")
+        lines.append('   A_ReturnErrorNoSuchCommand();')
+        lines.append("  END_IF")
+    else:
+        # No commands at all — no IF was opened, so no ELSE/END_IF needed
+        lines.append('  A_ReturnErrorNoSuchCommand();')
 
     return lines
 
 
-def emit_sync_block(resolved: ResolvedModuleClass) -> List[str]:
+def emit_sync_block(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
     """
     Emit the full synchronous request-processing block.
 
@@ -897,32 +952,33 @@ def emit_sync_block(resolved: ResolvedModuleClass) -> List[str]:
     Not implemented:
     - check
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("// 1 - Sync mode. Process client request")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("IF i_xSyncModeRequest AND (i_sModuleRequested = iq_sName OR (StrIsNullOrEmptyA(ADR(i_sModuleRequested)) AND (i_sAction = 'activate' OR i_sAction = 'deactivate'))) THEN")
     lines.append(" ")
 
-    lines.extend(_emit_sync_activate(resolved))
+    lines.extend(_emit_sync_activate(resolved, tasklist))
     lines.extend(_emit_sync_deactivate())
-    lines.extend(_emit_sync_read(resolved))
-    lines.extend(_emit_sync_change(resolved))
-    lines.extend(_emit_sync_do(resolved))
+    lines.extend(_emit_sync_read(resolved, tasklist))
+    lines.extend(_emit_sync_change(resolved, tasklist))
+    lines.extend(_emit_sync_do(resolved, tasklist))
 
-    lines.append("END_IF")
+    lines.append(" END_IF")  # closes IF i_sAction = 'activate' / ELSIF chain
+    lines.append("END_IF")  # closes IF i_xSyncModeRequest AND ...
     lines.append("")
 
     return lines
 
 
-def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> List[str]:
+def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> list[str]:
     """
     Emit the target-drive state machine.
 
     Only applies to Drivable modules.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     if resolved.interface_class != "Drivable":
         return lines
@@ -1009,13 +1065,13 @@ def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> Lis
     return lines
 
 
-def _emit_async_handle_updates(resolved: ResolvedModuleClass) -> List[str]:
+def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
     """
     Emit the async update-handling block.
 
     Applies to all modules.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("// Handle module updates for subscribed clients")
     lines.append("// ----------------------------------------------------------------------------")
@@ -1049,7 +1105,7 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass) -> List[str]:
     lines.append("  // Update subscribers on all module parameters when new updates are due (poll interval done)")
     lines.append("  IF xPollIntervalDone THEN")
 
-    lines.extend(_indent(_emit_all_parameter_reports("'update'", resolved), 2))
+    lines.extend(_indent(_emit_all_parameter_reports("'update'", resolved, tasklist, context="update"), 2))
 
     lines.append("  ELSE")
     lines.append("   // Update subscribers when changing the polling interval")
@@ -1093,7 +1149,7 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass) -> List[str]:
     return lines
 
 
-def emit_async_block(resolved: ResolvedModuleClass) -> List[str]:
+def emit_async_block(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
     """
     Emit the complete async block.
 
@@ -1104,7 +1160,7 @@ def emit_async_block(resolved: ResolvedModuleClass) -> List[str]:
     For Readable / Writable:
     - handle updates only
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("// 2 - Asynchronous mode")
     lines.append("// ----------------------------------------------------------------------------")
@@ -1113,12 +1169,12 @@ def emit_async_block(resolved: ResolvedModuleClass) -> List[str]:
     if resolved.interface_class == "Drivable":
         lines.extend(_emit_async_target_drive_state_machine(resolved))
 
-    lines.extend(_emit_async_handle_updates(resolved))
+    lines.extend(_emit_async_handle_updates(resolved, tasklist))
 
     return lines
 
 
-def emit_target_drive_monitor_block(resolved: ResolvedModuleClass) -> List[str]:
+def emit_target_drive_monitor_block(resolved: ResolvedModuleClass) -> list[str]:
     """
     Emit the final block that monitors target driving and updates status when done.
 
@@ -1130,7 +1186,7 @@ def emit_target_drive_monitor_block(resolved: ResolvedModuleClass) -> List[str]:
     - enum           -> i
     - enum tolerance is fixed to 0
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     if resolved.interface_class != "Drivable":
         return lines

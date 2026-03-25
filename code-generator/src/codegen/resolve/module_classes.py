@@ -39,7 +39,7 @@ Future extensions may add further SECoP datatypes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Optional
 import copy
 
 from codegen.resolve.types import (
@@ -94,7 +94,7 @@ class ModuleClassInfo:
     interface_class: str
 
 
-def _get_interface_class(module_dict: Dict[str, Any]) -> str:
+def _get_interface_class(module_dict: dict[str, Any]) -> str:
     """
     Extract and validate the module interface class from normalized config.
 
@@ -119,7 +119,7 @@ def _get_interface_class(module_dict: Dict[str, Any]) -> str:
     return ic
 
 
-def module_signature(module_dict: Dict[str, Any]) -> Dict[str, Any]:
+def module_signature(module_dict: dict[str, Any]) -> dict[str, Any]:
     """
     Create the module signature used to decide class equality.
 
@@ -167,7 +167,7 @@ def _longest_common_suffix(a: str, b: str) -> str:
     return pref[::-1]
 
 
-def _common_name_heuristic(names: List[str]) -> Optional[str]:
+def _common_name_heuristic(names: list[str]) -> Optional[str]:
     """
     Heuristic for naming a shared module class.
 
@@ -203,8 +203,8 @@ def _common_name_heuristic(names: List[str]) -> Optional[str]:
 
 
 def group_modules_into_classes(
-    modules: Dict[str, Dict[str, Any]]
-) -> Tuple[Dict[str, str], Dict[str, ModuleClassInfo]]:
+    modules: dict[str, dict[str, Any]]
+) -> tuple[dict[str, str], dict[str, ModuleClassInfo]]:
     """
     Group real modules into module classes.
 
@@ -274,7 +274,7 @@ def group_modules_into_classes(
 # Small helpers to read normalized config safely
 # ---------------------------------------------------------------------------
 
-def _get_accessible(module: Dict[str, Any], name: str) -> Optional[Dict[str, Any]]:
+def _get_accessible(module: dict[str, Any], name: str) -> Optional[dict[str, Any]]:
     """
     Return accessibles.<name> if it exists and is a dict, else None.
     """
@@ -283,7 +283,7 @@ def _get_accessible(module: Dict[str, Any], name: str) -> Optional[Dict[str, Any
     return value if isinstance(value, dict) else None
 
 
-def _get_datainfo(accessible: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _get_datainfo(accessible: dict[str, Any]) -> Optional[dict[str, Any]]:
     """
     Return accessible.datainfo if it exists and is a dict, else None.
     """
@@ -309,7 +309,7 @@ def _is_drivable(interface_class: str) -> bool:
 # Resolve value block
 # ---------------------------------------------------------------------------
 
-def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
+def _resolve_value(modclass: str, module: dict[str, Any]) -> ResolvedValue:
     """
     Resolve the PLC-oriented representation of accessibles.value.
 
@@ -362,6 +362,8 @@ def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
             is_numeric=True,
             is_enum=False,
             is_string=False,
+            is_array=False,
+            is_tuple=False,
             has_min_max=has_min_max,
             has_out_of_range=has_out_of_range,
             members=None,
@@ -379,6 +381,8 @@ def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
             is_numeric=False,
             is_enum=False,
             is_string=True,
+            is_array=False,
+            is_tuple=False,
             has_min_max=None,
             has_out_of_range=None,
             members=None,
@@ -398,14 +402,28 @@ def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
             is_numeric=False,
             is_enum=True,
             is_string=False,
+            is_array=False,
+            is_tuple=False,
             has_min_max=None,
             has_out_of_range=None,
             members=enum_members,
         )
 
-    if secop_type == "array":
-        raise ValueError(
-            "SECoP array values are not resolved yet in module_classes.py"
+    # Array and tuple value types are accepted by the generator but their
+    # internal structure is open-ended. Automatic PLC mapping cannot be produced.
+    # A placeholder resolved value is returned; generators will emit task markers.
+    if secop_type in ("array", "tuple"):
+        return ResolvedValue(
+            plc_type=f"(*TODO: {secop_type} value — manual implementation required*)",
+            var_prefix="x",
+            is_numeric=False,
+            is_enum=False,
+            is_string=False,
+            is_array=(secop_type == "array"),
+            is_tuple=(secop_type == "tuple"),
+            has_min_max=None,
+            has_out_of_range=None,
+            members=None,
         )
 
     raise ValueError(
@@ -420,7 +438,7 @@ def _resolve_value(modclass: str, module: Dict[str, Any]) -> ResolvedValue:
 def _resolve_target(
     interface_class: str,
     value: ResolvedValue,
-    module: Dict[str, Any]
+    module: dict[str, Any]
 ) -> Optional[ResolvedTarget]:
     """
     Resolve target-related structural behaviour.
@@ -507,7 +525,7 @@ def _resolve_target(
 # Resolve clear_errors + custom parameters + custom commands
 # ---------------------------------------------------------------------------
 
-def _resolve_has_clear_errors_command(module: Dict[str, Any]) -> bool:
+def _resolve_has_clear_errors_command(module: dict[str, Any]) -> bool:
     """
     A module has clear_errors support if accessibles.clear_errors exists.
 
@@ -530,7 +548,7 @@ def _custom_enum_type_name(modclass: str, secop_name: str) -> str:
 
 def _resolve_custom_parameters(
     modclass: str,
-    module: Dict[str, Any]
+    module: dict[str, Any]
 ) -> list[ResolvedCustomParameter]:
     """
     Resolve all customised parameters (SECoP names starting with '_').
@@ -639,6 +657,28 @@ def _resolve_custom_parameters(
             )
             continue
 
+        # Array and tuple custom parameters: accepted but require manual implementation.
+        if secop_type in ("array", "tuple"):
+            stem = acc_name[1:] or acc_name
+            nice = stem[0].upper() + stem[1:]
+
+            result.append(
+                ResolvedCustomParameter(
+                    secop_name=acc_name,
+                    description=description,
+                    plc_var_name=f"x_{nice}",
+                    plc_type=f"(*TODO: {secop_type} — manual implementation required*)",
+                    var_prefix="x",
+                    is_numeric=False,
+                    is_enum=False,
+                    is_string=False,
+                    is_array=(secop_type == "array"),
+                    is_tuple=(secop_type == "tuple"),
+                    members=None,
+                )
+            )
+            continue
+
         raise ValueError(
             f"Unsupported custom parameter type for {acc_name}: {secop_type}"
         )
@@ -646,7 +686,7 @@ def _resolve_custom_parameters(
     return result
 
 
-def _resolve_custom_commands(module: Dict[str, Any]) -> list[ResolvedCustomCommand]:
+def _resolve_custom_commands(module: dict[str, Any]) -> list[ResolvedCustomCommand]:
     """
     Resolve customised commands other than the standard stop and clear_errors.
 
@@ -692,7 +732,7 @@ def _resolve_custom_commands(module: Dict[str, Any]) -> list[ResolvedCustomComma
     return result
 
 
-def _resolve_pollinterval_changeable(module: Dict[str, Any]) -> bool:
+def _resolve_pollinterval_changeable(module: dict[str, Any]) -> bool:
     """
     Resolve whether pollinterval is changeable.
 
@@ -871,7 +911,7 @@ def _build_module_variables(
 
 def _resolve_one_module_class(
     modclass: str,
-    module: Dict[str, Any]
+    module: dict[str, Any]
 ) -> ResolvedModuleClass:
     """
     Resolve one module class from one representative real module.
@@ -918,7 +958,7 @@ def _resolve_one_module_class(
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def resolve_module_classes(normalized_cfg: Dict[str, Any]) -> ResolvedModuleClasses:
+def resolve_module_classes(normalized_cfg: dict[str, Any]) -> ResolvedModuleClasses:
     """
     Resolve all module classes from normalized config.
 

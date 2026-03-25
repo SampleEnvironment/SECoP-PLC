@@ -31,7 +31,6 @@ This matches the existing strategy already used for:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
 
 from codegen.resolve.types import (
     ResolvedCustomCommand,
@@ -40,6 +39,7 @@ from codegen.resolve.types import (
     ResolvedModuleClasses,
     ResolvedModuleVariable,
 )
+from codegen.tasklist import TaskList
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ def _extends_for_interface(interface_class: str) -> str:
 
 
 def _find_var(
-    module_variables: List[ResolvedModuleVariable],
+    module_variables: list[ResolvedModuleVariable],
     name: str,
 ) -> ResolvedModuleVariable | None:
     """
@@ -170,7 +170,7 @@ def _emit_custom_parameter_enum_types(
 # ST_Module_<class> building blocks
 # ---------------------------------------------------------------------------
 
-def _emit_value_block(resolved_class: ResolvedModuleClass) -> list[str]:
+def _emit_value_block(resolved_class: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
     """
     Emit the "value" block of ST_Module_<class> using resolved module variables.
 
@@ -178,7 +178,20 @@ def _emit_value_block(resolved_class: ResolvedModuleClass) -> list[str]:
     - Value
     - ValueMin / ValueMax (if configured)
     - ValueOutOfRangeL / H (if configured)
+
+    For array/tuple value types, a task comment is emitted instead of a typed
+    variable declaration because the internal structure is open-ended.
     """
+    # Array/tuple: no automatic variable declaration possible.
+    if resolved_class.value.is_array or resolved_class.value.is_tuple:
+        secop_type = "array" if resolved_class.value.is_array else "tuple"
+        return [
+            " " + tasklist.make_st_comment(
+                plc_path=f"ST_Module_{resolved_class.name}.value",
+                message=f"declare value variable(s) — type '{secop_type}' has open-ended structure; define appropriate PLC variable(s) and implement mapping manually",
+            )
+        ]
+
     lines: list[str] = []
 
     value_prefix = resolved_class.value.var_prefix
@@ -323,7 +336,7 @@ def _emit_custom_commands_block(resolved_class: ResolvedModuleClass) -> list[str
     return lines
 
 
-def _emit_struct_type(resolved_class: ResolvedModuleClass) -> str:
+def _emit_struct_type(resolved_class: ResolvedModuleClass, tasklist: TaskList) -> str:
     """
     Emit one ST_Module_<modclass> TYPE from one resolved module class.
     """
@@ -333,7 +346,7 @@ def _emit_struct_type(resolved_class: ResolvedModuleClass) -> str:
     lines.append(f"TYPE ST_Module_{resolved_class.name} EXTENDS {extends} :")
     lines.append("STRUCT")
 
-    lines.extend(_emit_value_block(resolved_class))
+    lines.extend(_emit_value_block(resolved_class, tasklist))
     lines.extend(_emit_target_block(resolved_class))
     lines.extend(_emit_clear_errors_block(resolved_class))
     lines.extend(_emit_custom_parameters_block(resolved_class))
@@ -351,6 +364,7 @@ def _emit_struct_type(resolved_class: ResolvedModuleClass) -> str:
 
 def emit_module_type_files(
     resolved_class: ResolvedModuleClass,
+    tasklist: TaskList,
 ) -> list[tuple[str, str]]:
     """
     Build all type files required for one resolved module class.
@@ -372,7 +386,7 @@ def emit_module_type_files(
     out.extend(_emit_custom_parameter_enum_types(resolved_class))
 
     st_filename = f"ST_Module_{resolved_class.name}.st"
-    st_source = _emit_struct_type(resolved_class)
+    st_source = _emit_struct_type(resolved_class, tasklist)
     out.append((st_filename, st_source))
 
     return out
@@ -381,6 +395,7 @@ def emit_module_type_files(
 def emit_all_module_types(
     classes: dict[str, ResolvedModuleClass],
     out_dir: Path,
+    tasklist: TaskList,
 ) -> None:
     """
     Generate all type files for all resolved module classes.
@@ -392,7 +407,7 @@ def emit_all_module_types(
     modules_dir.mkdir(parents=True, exist_ok=True)
 
     for resolved_class in classes.values():
-        for filename, source in emit_module_type_files(resolved_class):
+        for filename, source in emit_module_type_files(resolved_class, tasklist):
             path = modules_dir / filename
             path.write_text(source, encoding="utf-8")
 

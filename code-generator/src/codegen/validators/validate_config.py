@@ -30,7 +30,7 @@ understand the issue:
 Any later task-list generation should be handled separately from this module.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from codegen.model.secnode import SecNodeConfig
 from codegen.rules.types import Finding, Severity
@@ -54,6 +54,7 @@ from codegen.rules.secop_rules import (
     rule_datainfo_field_coherence,
     rule_datainfo_type_supported,
     rule_status_structure_and_codes,
+    rule_value_type_requires_manual_implementation,
 )
 from codegen.rules.plc_rules import (
     rule_xplc_keys_exist_in_secop_accessibles,
@@ -76,14 +77,14 @@ from codegen.rules.plc_rules import (
 )
 
 
-def validate_config(cfg: SecNodeConfig) -> List[Finding]:
+def validate_config(cfg: SecNodeConfig) -> list[Finding]:
     """
     Run all business rules and return a flat list of findings.
 
     The order is deliberate and stable so that validation reports are easier to
     compare during development and testing.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     # ------------------------------------------------------------------
     # SECoP / protocol-level rules
@@ -107,6 +108,7 @@ def validate_config(cfg: SecNodeConfig) -> List[Finding]:
     findings.extend(rule_datainfo_field_coherence(cfg))                  # R-DI-002
     findings.extend(rule_datainfo_type_supported(cfg))                   # R-DI-001
     findings.extend(rule_status_structure_and_codes(cfg))                # R-STAT-001/002/003/004/005
+    findings.extend(rule_value_type_requires_manual_implementation(cfg)) # R-ACC-011
 
     # ------------------------------------------------------------------
     # PLC / x-plc rules
@@ -132,7 +134,7 @@ def validate_config(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def build_report(findings: List[Finding]) -> Dict[str, Any]:
+def build_report(findings: list[Finding]) -> dict[str, Any]:
     """
     Convert findings into a stable JSON-friendly report.
 
@@ -153,7 +155,7 @@ def build_report(findings: List[Finding]) -> Dict[str, Any]:
     }
 
 
-def has_errors(findings: List[Finding]) -> bool:
+def has_errors(findings: list[Finding]) -> bool:
     """
     Return True if at least one ERROR finding exists.
     """

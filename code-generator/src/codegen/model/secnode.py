@@ -21,7 +21,7 @@ This file describes configuration structure only. It does not decide:
 Those decisions belong to the validation rules and to the resolve layer.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -103,7 +103,7 @@ class DataInfo(StrictBaseModel):
     max: Optional[float] = None
     maxchars: Optional[int] = None
     maxlen: Optional[int] = None
-    members: Optional[Union[Dict[str, int], List[Dict[str, Any]], Dict[str, Any]]] = None
+    members: Optional[Union[dict[str, int], list[dict[str, Any]], dict[str, Any]]] = None
 
     # command-specific optional nested datainfo
     argument: Optional["DataInfo"] = None
@@ -280,7 +280,7 @@ class PlcModuleConfig(StrictBaseModel):
     target: Optional[PlcTargetConfig] = None
     clear_errors: Optional[PlcClearErrorsConfig] = None
 
-    custom_parameters: Dict[str, PlcCustomParamConfig] = Field(default_factory=dict)
+    custom_parameters: dict[str, PlcCustomParamConfig] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -291,13 +291,13 @@ class Module(StrictBaseModel):
     """
     One module inside the SECoP node.
     """
-    interface_classes: List[str]
-    features: List[str] = Field(default_factory=list)
+    interface_classes: list[str]
+    features: list[str] = Field(default_factory=list)
 
     description: str
     implementation: str
 
-    accessibles: Dict[str, Accessible]
+    accessibles: dict[str, Accessible]
 
     # Module-level tooling data
     x_plc: Optional[PlcModuleConfig] = Field(default=None, alias="x-plc")
@@ -311,7 +311,7 @@ class SecNodeConfig(StrictBaseModel):
     description: str
     firmware: str
 
-    modules: Dict[str, Module]
+    modules: dict[str, Module]
 
     # Node-level tooling data
     x_plc: Optional[PlcNodeConfig] = Field(default=None, alias="x-plc")

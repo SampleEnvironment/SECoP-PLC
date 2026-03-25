@@ -25,8 +25,6 @@ Design notes
 
 from __future__ import annotations
 
-from typing import List
-
 from codegen.resolve.real_modules import (
     ResolvedRealModule,
     ResolvedRealModules,
@@ -43,11 +41,11 @@ def _module_prefix(module_name: str) -> str:
     return f"GVL_SecNode.G_st_{module_name}"
 
 
-def _emit_program_header() -> List[str]:
+def _emit_program_header() -> list[str]:
     """
     Emit the PROGRAM header and internal initialisation flag.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("PROGRAM SecopMapFromPlc")
     lines.append("VAR")
@@ -58,11 +56,11 @@ def _emit_program_header() -> List[str]:
     return lines
 
 
-def _emit_call_secop_init() -> List[str]:
+def _emit_call_secop_init() -> list[str]:
     """
     Emit the one-time SecopInit() call.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("// Initialise SECoP variables on CPU's first cycle")
     lines.append("IF NOT xSecopInitDone THEN")
@@ -106,14 +104,14 @@ def _custom_parameter_enum_members(
 def _emit_sec_node_mapping(
     resolved: ResolvedRealModules,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit SEC node timestamp and interface-ready mapping.
 
     These concepts always apply in this project. Missing configured tags are
     turned into task comments and task-list entries.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     sec_node = resolved.sec_node
 
     lines.append("// SEC node")
@@ -158,7 +156,7 @@ def _emit_value_mapping(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit mapping for the standard SECoP accessible 'value'.
 
@@ -166,7 +164,7 @@ def _emit_value_mapping(
     - numeric / string value -> x-plc.value.read_expr
     - enum value             -> x-plc.value.enum_tag
     """
-    lines: List[str] = []
+    lines: list[str] = []
     pfx = _module_prefix(module.module_name)
 
     lines.append("// Value")
@@ -180,7 +178,7 @@ def _emit_value_mapping(
                 tasklist.make_st_comment(
                     plc_path=f"SecopMapFromPlc.{module.module_name}.value",
                     message=(
-                        f"Configure automatic PLC-to-SECoP value mapping for module "
+                        f"Configure PLC-to-SECoP value mapping for module "
                         f"{module.module_name} (missing x-plc.value.read_expr)."
                     ),
                 )
@@ -204,7 +202,7 @@ def _emit_value_mapping(
                 tasklist.make_st_comment(
                     plc_path=f"SecopMapFromPlc.{module.module_name}.value",
                     message=(
-                        f"Configure automatic enum PLC-to-SECoP value mapping for "
+                        f"Configure enum PLC-to-SECoP value mapping for "
                         f"module {module.module_name} (missing x-plc.value.enum_tag)."
                     ),
                 )
@@ -229,12 +227,12 @@ def _emit_value_mapping(
 def _emit_target_change_interlock(
     module: ResolvedRealModule,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit mapping for the xPossible interlock used by Writable / Drivable target
     changes.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     if module.interface_class not in ("Writable", "Drivable"):
         return lines
@@ -261,14 +259,14 @@ def _emit_target_change_interlock(
 def _emit_timestamp_mapping(
     module: ResolvedRealModule,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit module timestamp mapping.
 
     Module timestamp mapping always applies conceptually in this project.
     Missing configuration becomes a task comment plus one task-list entry.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("// Timestamp")
     tag = module.x_plc_value.timestamp_tag if module.x_plc_value else None
@@ -286,12 +284,12 @@ def _emit_timestamp_mapping(
     return lines
 
 
-def _emit_clear_errors_reset(module: ResolvedRealModule) -> List[str]:
+def _emit_clear_errors_reset(module: ResolvedRealModule) -> list[str]:
     """
     Emit the reset of standard command flags that must be pulsed from PLC to
     SECoP side.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     if module.has_clear_errors_command:
         lines.append("// Reset commands")
@@ -301,7 +299,7 @@ def _emit_clear_errors_reset(module: ResolvedRealModule) -> List[str]:
     return lines
 
 
-def _emit_status_block(module: ResolvedRealModule) -> List[str]:
+def _emit_status_block(module: ResolvedRealModule) -> list[str]:
     """
     Emit the status-and-error evaluation block.
 
@@ -311,7 +309,7 @@ def _emit_status_block(module: ResolvedRealModule) -> List[str]:
     3) Hardware error
     4) Normal state logic
     """
-    lines: List[str] = []
+    lines: list[str] = []
     pfx = _module_prefix(module.module_name)
 
     lines.append("// Status and errors")
@@ -376,7 +374,7 @@ def _emit_one_custom_parameter_mapping(
     cp: ResolvedCustomParameter,
     cp_plc: ResolvedRealCustomParameterPlc | None,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit mapping for one customised parameter.
 
@@ -384,7 +382,7 @@ def _emit_one_custom_parameter_mapping(
     - numeric / string custom parameter -> read_expr
     - enum custom parameter             -> enum_tag
     """
-    lines: List[str] = []
+    lines: list[str] = []
     pfx = _module_prefix(module.module_name)
     lhs = f"{pfx}.{cp.plc_var_name}"
 
@@ -448,11 +446,11 @@ def _emit_one_custom_parameter_mapping(
 def _emit_custom_parameters(
     module: ResolvedRealModule,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit mappings for all resolved customised parameters of one real module.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     for cp in module.custom_parameters:
         cp_plc = module.x_plc_custom_parameters.get(cp.secop_name)
@@ -465,11 +463,11 @@ def _emit_module_mapping(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit the full PLC-to-SECoP mapping block for one real module.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append(f"// {module.module_name}")
     lines.append("// -----------------------------------------------------------------")
@@ -493,7 +491,7 @@ def emit_prg_secop_map_from_plc(
     """
     Emit full ST source for PROGRAM SecopMapFromPlc.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.extend(_emit_program_header())
     lines.extend(_emit_call_secop_init())

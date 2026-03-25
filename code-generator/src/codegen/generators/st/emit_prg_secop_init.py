@@ -22,8 +22,6 @@ Design notes
 
 from __future__ import annotations
 
-from typing import List
-
 from codegen.resolve.real_modules import (
     ResolvedRealModule,
     ResolvedRealModules,
@@ -85,7 +83,7 @@ def _emit_optional_scalar_assignment_with_task(
     plc_path: str,
     task_message: str,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit one scalar ST assignment when the value exists.
 
@@ -103,11 +101,11 @@ def _emit_optional_scalar_assignment_with_task(
 # Fixed header
 # ---------------------------------------------------------------------------
 
-def _emit_fixed_header() -> List[str]:
+def _emit_fixed_header() -> list[str]:
     """
     Emit the fixed first block of SecopInit.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("PROGRAM SecopInit")
     lines.append("")
@@ -131,7 +129,7 @@ def _emit_fixed_header() -> List[str]:
 def _emit_init_sec_node(
     resolved: ResolvedRealModules,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit the SEC node initialization block.
 
@@ -139,7 +137,7 @@ def _emit_init_sec_node(
     project. If they are not configured, task comments are emitted instead of
     invalid ST.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     sec_node = resolved.sec_node
 
     lines.append("// SEC node")
@@ -195,7 +193,7 @@ def _emit_init_sec_node(
 def _emit_module_init(
     module: ResolvedRealModule,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit initialization lines for one real module.
 
@@ -203,7 +201,7 @@ def _emit_module_init(
     therefore generates only the variables that are structurally present in the
     corresponding ST_Module_<class>.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     pfx = _secop_gvl_module_prefix(module.module_name)
 
     lines.append(f"// {module.module_name}")
@@ -217,10 +215,21 @@ def _emit_module_init(
         lines.append(f"{pfx}.{module.value_var_prefix}TargetMin := {module.target_min};")
         lines.append(f"{pfx}.{module.value_var_prefix}TargetMax := {module.target_max};")
 
-    if module.target_has_drive_tolerance:
-        lines.append(
-            f"{pfx}.{module.value_var_prefix}TargetDriveTolerance := {module.target_drive_tolerance};"
-        )
+    if module.interface_class == "Drivable" and module.value_is_numeric:
+        if module.target_drive_tolerance is not None:
+            lines.append(
+                f"{pfx}.{module.value_var_prefix}TargetDriveTolerance := {module.target_drive_tolerance};"
+            )
+        else:
+            lines.append(
+                tasklist.make_st_comment(
+                    plc_path=f"SecopInit.{module.module_name}.target_drive_tolerance",
+                    message=(
+                        f"Configure target drive absolute tolerance for module "
+                        f"{module.module_name}."
+                    ),
+                )
+            )
 
     if module.value_has_min_max:
         lines.append(f"{pfx}.{module.value_var_prefix}ValueMin := {module.value_min};")
@@ -250,28 +259,6 @@ def _emit_module_init(
                 )
             )
 
-    for cp in module.custom_parameters:
-        lines.append(
-            tasklist.make_st_comment(
-                plc_path=f"SecopInit.{module.module_name}.{cp.secop_name}",
-                message=(
-                    f"Initialise customised parameter {cp.secop_name} for module "
-                    f"{module.module_name} if required by the PLC project."
-                ),
-            )
-        )
-
-    for cc in module.custom_commands:
-        lines.append(
-            tasklist.make_st_comment(
-                plc_path=f"SecopInit.{module.module_name}.{cc.secop_name}",
-                message=(
-                    f"Initialise customised command {cc.secop_name} for module "
-                    f"{module.module_name} if required by the PLC project."
-                ),
-            )
-        )
-
     lines.append("")
 
     return lines
@@ -280,11 +267,11 @@ def _emit_module_init(
 def _emit_init_modules(
     resolved: ResolvedRealModules,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit initialization blocks for all real modules in config order.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     for module_name in resolved.sec_node.module_names_in_order:
         lines.extend(_emit_module_init(resolved.modules[module_name], tasklist))
@@ -303,7 +290,7 @@ def emit_prg_secop_init(
     """
     Emit the full ST source for PROGRAM SecopInit.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.extend(_emit_fixed_header())
     lines.extend(_emit_init_sec_node(resolved, tasklist))

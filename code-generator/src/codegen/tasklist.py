@@ -13,7 +13,6 @@ The task list is intentionally minimal:
 """
 
 from dataclasses import asdict, dataclass
-from typing import List
 
 
 @dataclass(frozen=True)
@@ -36,7 +35,7 @@ class TaskList:
     """
 
     def __init__(self) -> None:
-        self._tasks: List[Task] = []
+        self._tasks: list[Task] = []
         self._counter: int = 1
 
     def add(self, plc_path: str, message: str) -> str:
@@ -70,14 +69,14 @@ class TaskList:
         task_id = self.add(plc_path=plc_path, message=message)
         return f"// {task_id}: {message}"
 
-    def to_list(self) -> List[dict]:
+    def to_list(self) -> list[dict]:
         """
         Return the collected tasks as plain dictionaries for JSON serialisation.
         """
         return [asdict(task) for task in self._tasks]
 
     @property
-    def tasks(self) -> List[Task]:
+    def tasks(self) -> list[Task]:
         """
         Read-only style access to collected tasks.
         """

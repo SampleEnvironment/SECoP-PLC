@@ -23,7 +23,6 @@ General policy
   need manual completion
 """
 
-from typing import List, Set, Dict
 
 from codegen.model.secnode import SecNodeConfig, Module
 from codegen.rules.types import Finding, Severity
@@ -87,7 +86,7 @@ def _is_readable(m: Module) -> bool:
     return _has_class(m, "Readable") or _is_writable(m)
 
 
-def _required_accessibles_for_module(m: Module) -> Set[str]:
+def _required_accessibles_for_module(m: Module) -> set[str]:
     """
     Return the set of required standard accessibles for one module according to
     the simplified interface-class model used by this generator.
@@ -97,7 +96,7 @@ def _required_accessibles_for_module(m: Module) -> Set[str]:
     - Writable: Readable + target
     - Drivable: Writable + stop
     """
-    required: Set[str] = set()
+    required: set[str] = set()
 
     if _is_readable(m):
         required |= {"value", "status", "pollinterval"}
@@ -111,7 +110,7 @@ def _required_accessibles_for_module(m: Module) -> Set[str]:
     return required
 
 
-def _datainfo_fields_other_than_type_and_command(di) -> Dict[str, object]:
+def _datainfo_fields_other_than_type_and_command(di) -> dict[str, object]:
     """
     Return a small dictionary of optional DataInfo fields used by the generic
     field-coherence rule.
@@ -134,7 +133,7 @@ def _datainfo_fields_other_than_type_and_command(di) -> Dict[str, object]:
 # Rules
 # ---------------------------------------------------------------------------
 
-def rule_non_empty_modules(cfg: SecNodeConfig) -> List[Finding]:
+def rule_non_empty_modules(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-NODE-001:
     The node must contain at least one module.
@@ -142,7 +141,7 @@ def rule_non_empty_modules(cfg: SecNodeConfig) -> List[Finding]:
     Pydantic accepts an empty dictionary for "modules", so this must be enforced
     here as a business rule.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     if not cfg.modules:
         findings.append(
@@ -157,7 +156,7 @@ def rule_non_empty_modules(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_interface_classes_single(cfg: SecNodeConfig) -> List[Finding]:
+def rule_interface_classes_single(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-MOD-001:
     interface_classes must contain exactly one element:
@@ -166,7 +165,7 @@ def rule_interface_classes_single(cfg: SecNodeConfig) -> List[Finding]:
     Readable is implicit in Writable.
     Writable is implicit in Drivable.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         classes = mod.interface_classes
@@ -202,7 +201,7 @@ def rule_interface_classes_single(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Finding]:
+def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-MOD-002:
     This PLC SEC node does not support the HasOffset feature or the standard
@@ -211,7 +210,7 @@ def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Fi
     Only the feature name 'HasOffset' is recognised here. Any other feature
     name is treated as unsupported.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         feats = mod.features or []
@@ -259,12 +258,12 @@ def rule_features_and_offset_not_supported_on_plc(cfg: SecNodeConfig) -> List[Fi
     return findings
 
 
-def rule_required_accessibles(cfg: SecNodeConfig) -> List[Finding]:
+def rule_required_accessibles(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-CLS-001 / R-CLS-002 / R-CLS-003:
     Validate the standard required accessibles for each interface class.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         accessibles = mod.accessibles or {}
@@ -307,7 +306,7 @@ def rule_required_accessibles(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> List[Finding]:
+def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-CLS-004:
     Forbid standard accessibles that are not allowed for the module interface
@@ -316,7 +315,7 @@ def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> List[Finding]:
     Any accessible whose name starts with '_' is considered customised and is
     always allowed by this rule.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     allowed_by_class = {
         "Readable": {"value", "status", "pollinterval", "clear_errors"},
@@ -348,7 +347,7 @@ def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
+def rule_status_structure_and_codes(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-STAT-001 / 002 / 003 / 004 / 005 combined.
 
@@ -360,9 +359,9 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
     - extra status members are allowed only as a warning for now; they are not
       supported by the current PLC SEC node generator
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
-    base_required: Dict[str, int] = {"IDLE": 100, "WARN": 200, "ERROR": 400}
+    base_required: dict[str, int] = {"IDLE": 100, "WARN": 200, "ERROR": 400}
     allowed_status_keys = {"DISABLED", "IDLE", "WARN", "BUSY", "ERROR"}
 
     for mod_name, mod in cfg.modules.items():
@@ -434,7 +433,7 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
             )
             continue
 
-        expected_codes: Dict[str, int] = dict(base_required)
+        expected_codes: dict[str, int] = dict(base_required)
 
         if _is_drivable(mod):
             expected_codes["BUSY"] = 300
@@ -507,13 +506,13 @@ def rule_status_structure_and_codes(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_custom_command_accessibles_warn(cfg: SecNodeConfig) -> List[Finding]:
+def rule_custom_command_accessibles_warn(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-001:
     Custom command accessibles (name starts with '_') are allowed, but the
     generator does not implement them automatically yet.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -534,7 +533,7 @@ def rule_custom_command_accessibles_warn(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_accessible_members_by_type(cfg: SecNodeConfig) -> List[Finding]:
+def rule_accessible_members_by_type(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-002:
     Validate the expected container type of datainfo.members for supported
@@ -544,7 +543,7 @@ def rule_accessible_members_by_type(cfg: SecNodeConfig) -> List[Finding]:
     - tuple -> members must be a list
     - array -> members must be a dict
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -586,12 +585,12 @@ def rule_accessible_members_by_type(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_numeric_ranges_coherent(cfg: SecNodeConfig) -> List[Finding]:
+def rule_numeric_ranges_coherent(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-003:
     If both min and max exist, min must be strictly less than max.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -609,7 +608,7 @@ def rule_numeric_ranges_coherent(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_numeric_ranges_must_define_both_ends(cfg: SecNodeConfig) -> List[Finding]:
+def rule_numeric_ranges_must_define_both_ends(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-003B:
     For numeric accessibles used in this project, min and max must be defined
@@ -624,7 +623,7 @@ def rule_numeric_ranges_must_define_both_ends(cfg: SecNodeConfig) -> List[Findin
     - if min is configured, max must also be configured
     - if max is configured, min must also be configured
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     checked_accessibles = {"value", "target", "target_limits"}
 
@@ -673,14 +672,14 @@ def rule_numeric_ranges_must_define_both_ends(cfg: SecNodeConfig) -> List[Findin
     return findings
 
 
-def rule_target_limits_within_target(cfg: SecNodeConfig) -> List[Finding]:
+def rule_target_limits_within_target(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-004:
     If target_limits exists, it must restrict target.
 
     This rule is only enforced when the relevant values are present.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         accessibles = mod.accessibles or {}
@@ -722,13 +721,13 @@ def rule_target_limits_within_target(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_string_requires_maxchars(cfg: SecNodeConfig) -> List[Finding]:
+def rule_string_requires_maxchars(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-005:
     string datainfo must define maxchars > 0 because PLC code generation needs a
     fixed string length.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -750,13 +749,13 @@ def rule_string_requires_maxchars(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_array_requires_maxlen(cfg: SecNodeConfig) -> List[Finding]:
+def rule_array_requires_maxlen(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-006:
     array datainfo must define maxlen > 0 because PLC code generation needs a
     fixed array length.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -779,7 +778,7 @@ def rule_array_requires_maxlen(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> List[Finding]:
+def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-007:
     Enforce the current readonly policy for this PLC SEC node.
@@ -793,7 +792,7 @@ def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> List[Finding
         * pollinterval
     - every other non-command accessible must have readonly=true
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     writable_allowed = {"target", "pollinterval"}
 
@@ -851,13 +850,13 @@ def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> List[Finding
     return findings
 
 
-def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> List[Finding]:
+def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-008:
     In Writable and Drivable modules, target and target_limits must use the same
     datainfo.type as value.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         if not _is_writable(mod):
@@ -902,7 +901,7 @@ def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> List[Finding]
     return findings
 
 
-def rule_bool_type_forbidden(cfg: SecNodeConfig) -> List[Finding]:
+def rule_bool_type_forbidden(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-009:
     datainfo.type == 'bool' is not accepted by this PLC SEC node project.
@@ -912,7 +911,7 @@ def rule_bool_type_forbidden(cfg: SecNodeConfig) -> List[Finding]:
     typical heatswitch pattern:
         {"type": "enum", "members": {"off": 0, "on": 1}}
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -923,10 +922,9 @@ def rule_bool_type_forbidden(cfg: SecNodeConfig) -> List[Finding]:
                         severity=Severity.ERROR,
                         path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.type",
                         message=(
-                            "datainfo.type 'bool' is not accepted in this PLC SEC "
-                            "node project. Please use enum type with values 0 and 1, "
-                            "and provide descriptive member names, for example "
-                            '{"type": "enum", "members": {"off": 0, "on": 1}}.'
+                            "Consider using enum instead of bool, and choose "
+                            "descriptive names for each member, "
+                            'e.g. {"off": 0, "on": 1} or {"stopped": 0, "running": 1}.'
                         ),
                     )
                 )
@@ -934,7 +932,7 @@ def rule_bool_type_forbidden(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_command_datainfo_shape(cfg: SecNodeConfig) -> List[Finding]:
+def rule_command_datainfo_shape(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-010:
     For datainfo.type == 'command':
@@ -943,7 +941,7 @@ def rule_command_datainfo_shape(cfg: SecNodeConfig) -> List[Finding]:
     - if argument/result exist, they must define 'type'
     - argument/result types must be supported by this generator
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -1007,7 +1005,7 @@ def rule_command_datainfo_shape(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_datainfo_field_coherence(cfg: SecNodeConfig) -> List[Finding]:
+def rule_datainfo_field_coherence(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-DI-002:
     Validate coherence between datainfo.type and the optional DataInfo fields.
@@ -1020,7 +1018,7 @@ def rule_datainfo_field_coherence(cfg: SecNodeConfig) -> List[Finding]:
     - members only allowed for 'enum', 'tuple', 'array'
     - argument/result only allowed for 'command'
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -1090,13 +1088,13 @@ def rule_datainfo_field_coherence(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_datainfo_type_supported(cfg: SecNodeConfig) -> List[Finding]:
+def rule_datainfo_type_supported(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-DI-001:
     datainfo.type must be defined by the SECoP protocol and supported by the
     current PLC SEC node generator.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -1126,5 +1124,51 @@ def rule_datainfo_type_supported(cfg: SecNodeConfig) -> List[Finding]:
                         message=f"datainfo.type '{t}' is not defined by the SECoP protocol.",
                     )
                 )
+
+    return findings
+
+
+# Accessible types that the code generator accepts but cannot map automatically.
+# Their internal structure is open-ended, so there is no single automatic PLC
+# implementation that would cover all possible cases.
+_MANUAL_IMPL_TYPES = {"array", "tuple"}
+
+
+def rule_value_type_requires_manual_implementation(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-ACC-011:
+    accessibles.value.datainfo.type is 'array' or 'tuple'.
+
+    These types are accepted by the code generator but their internal structure
+    is open-ended: an array or tuple can contain any combination of member types,
+    so there is no automatic PLC mapping that covers all possibilities.
+
+    The generator will produce skeleton code with task markers wherever
+    value-specific PLC mapping is required. Manual completion by the PLC
+    developer is needed.
+    """
+    findings: list[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        acc = (mod.accessibles or {}).get("value")
+        if acc is None:
+            continue
+        t = (acc.datainfo.type or "").strip().lower()
+        if t not in _MANUAL_IMPL_TYPES:
+            continue
+
+        findings.append(
+            Finding(
+                rule_id="R-ACC-011",
+                severity=Severity.WARNING,
+                path=f"$.modules.{mod_name}.accessibles.value.datainfo.type",
+                message=(
+                    f"value.datainfo.type '{t}' has an open-ended internal structure. "
+                    "Automatic PLC value mapping cannot be generated for this type. "
+                    "The generator will emit task markers where manual implementation "
+                    "is required."
+                ),
+            )
+        )
 
     return findings

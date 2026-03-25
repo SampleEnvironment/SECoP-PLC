@@ -21,7 +21,7 @@ General policy
   be required later
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any, Optional
 
 from codegen.model.secnode import SecNodeConfig
 from codegen.rules.types import Finding, Severity
@@ -44,14 +44,14 @@ def _is_empty(value: Optional[str]) -> bool:
     return value is None or str(value).strip() == ""
 
 
-def _is_drivable(interface_classes: Optional[List[str]]) -> bool:
+def _is_drivable(interface_classes: Optional[list[str]]) -> bool:
     """
     Convenience helper used by several x-plc target rules.
     """
     return "Drivable" in (interface_classes or [])
 
 
-def _status_enum_members(mod: Any) -> Optional[Dict[str, int]]:
+def _status_enum_members(mod: Any) -> Optional[dict[str, int]]:
     """
     Return the status enum members dict when status has the expected
     tuple(enum, string) shape. Otherwise return None.
@@ -125,7 +125,7 @@ def _is_enum_type(secop_type: str) -> bool:
 # Core x-plc existence / completeness rules
 # ---------------------------------------------------------------------------
 
-def rule_xplc_keys_exist_in_secop_accessibles(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_keys_exist_in_secop_accessibles(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-001:
     x-plc standard blocks must only exist when the corresponding SECoP
@@ -137,7 +137,7 @@ def rule_xplc_keys_exist_in_secop_accessibles(cfg: SecNodeConfig) -> List[Findin
     - target
     - clear_errors
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     xplc_to_acc = {
         "value": "value",
@@ -173,7 +173,7 @@ def rule_xplc_keys_exist_in_secop_accessibles(cfg: SecNodeConfig) -> List[Findin
     return findings
 
 
-def rule_xplc_node_fields_configured(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_node_fields_configured(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-010:
     Node-level x-plc fields should be configured.
@@ -181,7 +181,7 @@ def rule_xplc_node_fields_configured(cfg: SecNodeConfig) -> List[Finding]:
     These fields are optional in the Pydantic model, but they conceptually apply
     to the PLC SEC node project, so missing values produce WARNING findings.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     xplc = cfg.x_plc
     if not xplc:
@@ -252,12 +252,12 @@ def rule_xplc_node_fields_configured(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_xplc_module_timestamp_tag_configured(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_module_timestamp_tag_configured(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-020:
     Module-level x-plc.timestamp_tag should be configured.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -281,13 +281,13 @@ def rule_xplc_module_timestamp_tag_configured(cfg: SecNodeConfig) -> List[Findin
 # Status-related rules
 # ---------------------------------------------------------------------------
 
-def rule_xplc_status_hw_error_fields_configured(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_status_hw_error_fields_configured(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-021:
     If x-plc.status exists, hw_error_expr and hw_error_description should be
     configured.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -317,7 +317,7 @@ def rule_xplc_status_hw_error_fields_configured(cfg: SecNodeConfig) -> List[Find
     return findings
 
 
-def rule_xplc_status_hw_error_fields_coherent(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_status_hw_error_fields_coherent(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-021A:
     x-plc.status.hw_error_expr and hw_error_description must be configured
@@ -325,7 +325,7 @@ def rule_xplc_status_hw_error_fields_coherent(cfg: SecNodeConfig) -> List[Findin
 
     This is a contradiction/coherence rule, so violations are ERROR.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -364,7 +364,7 @@ def rule_xplc_status_hw_error_fields_coherent(cfg: SecNodeConfig) -> List[Findin
     return findings
 
 
-def rule_xplc_status_comm_error_fields_configured(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_status_comm_error_fields_configured(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-021B:
     comm_error_expr / comm_error_description are optional.
@@ -372,7 +372,7 @@ def rule_xplc_status_comm_error_fields_configured(cfg: SecNodeConfig) -> List[Fi
     If one is configured, the other should also be configured. The pair-coherence
     contradiction itself is handled by a separate ERROR rule.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -413,7 +413,7 @@ def rule_xplc_status_comm_error_fields_configured(cfg: SecNodeConfig) -> List[Fi
     return findings
 
 
-def rule_xplc_status_comm_error_fields_coherent(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_status_comm_error_fields_coherent(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-021C:
     x-plc.status.comm_error_expr and comm_error_description must be configured
@@ -421,7 +421,7 @@ def rule_xplc_status_comm_error_fields_coherent(cfg: SecNodeConfig) -> List[Find
 
     This is a contradiction/coherence rule, so violations are ERROR.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -460,7 +460,7 @@ def rule_xplc_status_comm_error_fields_coherent(cfg: SecNodeConfig) -> List[Find
     return findings
 
 
-def rule_xplc_status_disabled_fields_coherent(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_status_disabled_fields_coherent(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-022 / R-PLC-023:
 
@@ -469,7 +469,7 @@ def rule_xplc_status_disabled_fields_coherent(cfg: SecNodeConfig) -> List[Findin
     - WARNING if status enum contains DISABLED:0 but x-plc.status.disabled_*
       is missing or empty
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -531,12 +531,12 @@ def rule_xplc_status_disabled_fields_coherent(cfg: SecNodeConfig) -> List[Findin
 # Target-related rules
 # ---------------------------------------------------------------------------
 
-def rule_xplc_target_change_possible_expr_configured(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_target_change_possible_expr_configured(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-026:
     If x-plc.target exists, change_possible_expr should be configured.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -556,7 +556,7 @@ def rule_xplc_target_change_possible_expr_configured(cfg: SecNodeConfig) -> List
     return findings
 
 
-def rule_xplc_target_reach_fields(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_target_reach_fields(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-024 / R-PLC-025:
 
@@ -565,7 +565,7 @@ def rule_xplc_target_reach_fields(cfg: SecNodeConfig) -> List[Finding]:
     - WARNING if reach_timeout_s is missing for Drivable modules
     - WARNING if reach_abs_tolerance is missing for Drivable numeric targets
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -638,7 +638,7 @@ def rule_xplc_target_reach_fields(cfg: SecNodeConfig) -> List[Finding]:
 # Value mapping rules
 # ---------------------------------------------------------------------------
 
-def rule_xplc_value_mapping_by_type(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_value_mapping_by_type(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-030 / R-PLC-031:
     Validate x-plc.value mapping according to the SECoP value type.
@@ -650,7 +650,7 @@ def rule_xplc_value_mapping_by_type(cfg: SecNodeConfig) -> List[Finding]:
     Missing mapping fields produce WARNING.
     Contradictory mapping fields produce ERROR.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -714,14 +714,14 @@ def rule_xplc_value_mapping_by_type(cfg: SecNodeConfig) -> List[Finding]:
     return findings
 
 
-def rule_xplc_value_outofrange_numeric_only(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_value_outofrange_numeric_only(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-034:
     x-plc.value.outofrange_min/outofrange_max are optional, but only allowed for
     numeric SECoP value types ('double' or 'int') and must be configured
     together.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -773,7 +773,7 @@ def rule_xplc_value_outofrange_numeric_only(cfg: SecNodeConfig) -> List[Finding]
 # Target mapping rules
 # ---------------------------------------------------------------------------
 
-def rule_xplc_target_mapping_by_type(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_target_mapping_by_type(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-032 / R-PLC-033:
     Validate x-plc.target mapping according to the SECoP target type.
@@ -785,7 +785,7 @@ def rule_xplc_target_mapping_by_type(cfg: SecNodeConfig) -> List[Finding]:
     Missing mapping fields produce WARNING.
     Contradictory mapping fields produce ERROR.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -853,7 +853,7 @@ def rule_xplc_target_mapping_by_type(cfg: SecNodeConfig) -> List[Finding]:
 # clear_errors rules
 # ---------------------------------------------------------------------------
 
-def rule_xplc_clear_errors_cmd_stmt_optional(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_clear_errors_cmd_stmt_optional(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-040:
     If a module defines clear_errors, x-plc.clear_errors.cmd_stmt may be
@@ -863,7 +863,7 @@ def rule_xplc_clear_errors_cmd_stmt_optional(cfg: SecNodeConfig) -> List[Finding
     needed when the PLC project should perform additional hardware-specific
     recovery actions.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         accs = mod.accessibles or {}
@@ -905,13 +905,13 @@ def rule_xplc_clear_errors_cmd_stmt_optional(cfg: SecNodeConfig) -> List[Finding
     return findings
 
 
-def rule_xplc_clear_errors_only_if_command_exists(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_clear_errors_only_if_command_exists(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-041:
     x-plc.clear_errors is only allowed when the module defines the standard
     SECoP command clear_errors.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -938,7 +938,7 @@ def rule_xplc_clear_errors_only_if_command_exists(cfg: SecNodeConfig) -> List[Fi
 # Custom parameter x-plc rules
 # ---------------------------------------------------------------------------
 
-def rule_xplc_custom_parameters_exist_and_match_accessibles(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_custom_parameters_exist_and_match_accessibles(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-050:
     Every key under x-plc.custom_parameters must refer to an existing customised
@@ -949,7 +949,7 @@ def rule_xplc_custom_parameters_exist_and_match_accessibles(cfg: SecNodeConfig) 
     - its name must start with '_'
     - it must not be a command
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
@@ -1004,7 +1004,7 @@ def rule_xplc_custom_parameters_exist_and_match_accessibles(cfg: SecNodeConfig) 
     return findings
 
 
-def rule_xplc_custom_parameter_mapping_by_type(cfg: SecNodeConfig) -> List[Finding]:
+def rule_xplc_custom_parameter_mapping_by_type(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-051 / R-PLC-052:
     Validate each x-plc.custom_parameters.<name> mapping according to the
@@ -1014,7 +1014,7 @@ def rule_xplc_custom_parameter_mapping_by_type(cfg: SecNodeConfig) -> List[Findi
     - numeric / string custom parameter -> read_expr
     - enum custom parameter             -> enum_tag
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc

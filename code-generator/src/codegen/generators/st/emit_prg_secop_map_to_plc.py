@@ -23,8 +23,6 @@ Design notes
 
 from __future__ import annotations
 
-from typing import List
-
 from codegen.resolve.real_modules import (
     ResolvedRealModule,
     ResolvedRealModules,
@@ -92,11 +90,11 @@ def _needs_small_string_monitor(module: ResolvedRealModule) -> bool:
     return _is_writable_not_drivable(module) and module.value_is_string
 
 
-def _emit_var_block(resolved_real_modules: ResolvedRealModules) -> List[str]:
+def _emit_var_block(resolved_real_modules: ResolvedRealModules) -> list[str]:
     """
     Emit the PROGRAM declaration and internal helper FB instances.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("PROGRAM SecopMapToPlc")
     lines.append("VAR")
@@ -149,11 +147,11 @@ def _emit_drivable_apply_target_block(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit target-application logic for one Drivable module.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     pfx = _module_prefix(module.module_name)
 
     if not _is_drivable(module):
@@ -235,11 +233,11 @@ def _emit_writable_apply_target_block(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit target-application logic for one Writable non-drivable module.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     pfx = _module_prefix(module.module_name)
 
     if not _is_writable_not_drivable(module):
@@ -336,11 +334,11 @@ def _emit_writable_apply_target_block(
     return lines
 
 
-def _emit_apply_clear_errors_block(module: ResolvedRealModule) -> List[str]:
+def _emit_apply_clear_errors_block(module: ResolvedRealModule) -> list[str]:
     """
     Emit the hardware-side application of the clear_errors command.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     pfx = _module_prefix(module.module_name)
 
     if not module.has_clear_errors_command:
@@ -366,11 +364,11 @@ def _emit_module_block(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
     tasklist: TaskList,
-) -> List[str]:
+) -> list[str]:
     """
     Emit the full SECoP-to-PLC mapping block for one real module.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append(f"// {module.module_name}")
     lines.append("// -----------------------------------------------------------------")
@@ -385,12 +383,12 @@ def _emit_module_block(
 
 def _emit_sec_node_clear_errors_block(
     resolved_real_modules: ResolvedRealModules,
-) -> List[str]:
+) -> list[str]:
     """
     Emit the SEC node-level clear_errors reset when any module clear_errors
     command is active.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     modules_with_clear = [
         m.module_name
@@ -433,7 +431,7 @@ def emit_prg_secop_map_to_plc(
     """
     Emit full ST source for PROGRAM SecopMapToPlc.
     """
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.extend(_emit_var_block(resolved_real_modules))
 

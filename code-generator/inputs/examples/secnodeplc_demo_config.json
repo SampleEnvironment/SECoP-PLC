@@ -16,7 +16,7 @@
       "interface_classes": ["Drivable"],
       "features": [],
       "description": "Heatswitch for `mf` device",
-      "implementation": "github.com/SampleEnvironment/SECoP/PLC/HeatSwitch",
+      "implementation": "github.com/SampleEnvironment/SECoP-PLC/",
       "accessibles": {
         "value": {
           "description": "current state (on or off)",
@@ -96,7 +96,7 @@
         },
         "target": {
           "enum_tag": "G_iHeatSwitchCmd",
-          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled",
           "reach_timeout_s": 60
         },
         "clear_errors": {
@@ -110,7 +110,7 @@
       ],
       "features": [],
       "description": "simulates some cryomagnet with persistent/non-persistent switching",
-      "implementation": "github.com/SampleEnvironment/SECoP/PLC/Magnet",
+      "implementation": "ggithub.com/SampleEnvironment/SECoP-PLC/",
       "accessibles": {
         "value": {
           "description": "current field in T",
@@ -202,8 +202,8 @@
           "hw_error_description": "Cryomagnet fault"
         },
         "target": {
-          "write_stmt": "G_rMfSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_mf.lrTargetChangeNewVal);",
-          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;",
+          "write_stmt": "G_rMfSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_mf.lrTargetChangeNewVal)",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled",
           "reach_timeout_s": 300,
           "reach_abs_tolerance" : 0.1
         },
@@ -218,7 +218,7 @@
       ],
       "features": [],
       "description": "some temperature",
-      "implementation": "github.com/SampleEnvironment/SECoP/PLC/TempSensor",
+      "implementation": "github.com/SampleEnvironment/SECoP-PLC/",
       "accessibles": {
         "value": {
           "description": "Sample temperature",
@@ -303,8 +303,8 @@
           "hw_error_description": "Sample chamber Temperature Sensor fault"
         },
         "target": {
-          "write_stmt": "G_rSampleChTempSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_ts.lrTargetChangeNewVal);",
-          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;",
+          "write_stmt": "G_rSampleChTempSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_ts.lrTargetChangeNewVal)",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled",
           "reach_timeout_s": 60,
           "reach_abs_tolerance": 0.1
         },
@@ -321,7 +321,7 @@
       ],
       "features": [],
       "description": "some temperature",
-      "implementation": "github.com/SampleEnvironment/SECoP/PLC/lakeshore336",
+      "implementation": "github.com/SampleEnvironment/SECoP-PLC/",
       "accessibles": {
         "value": {
           "description": "Coil temperature",
@@ -401,7 +401,7 @@
       ],
       "features": [],
       "description": "some temperature",
-      "implementation": "github.com/SampleEnvironment/SECoP/PLC/lakeshore336",
+      "implementation": "github.com/SampleEnvironment/SECoP-PLC/",
       "accessibles": {
         "value": {
           "description": "Coil temperature",
@@ -481,7 +481,7 @@
       ],
       "features": [],
       "description": "some label indicating the state of the magnet `mf`.",
-      "implementation": "frappy_demo.modules.Label",
+      "implementation": "github.com/SampleEnvironment/SECoP-PLC/",
       "accessibles": {
         "value": {
           "description": "final value of label string",
@@ -535,7 +535,7 @@
       ],
       "features": [],
       "description": "Current setpoint",
-      "implementation": "github.com/SampleEnvironment/SECoP/PLC/currentsetpoint",
+      "implementation": "github.com/SampleEnvironment/SECoP-PLC/",
       "accessibles": {
         "value": {
           "description": "current value of the module",
@@ -605,8 +605,8 @@
           "hw_error_description": "Current Setpoint device fault"
         },
         "target": {
-          "write_stmt": "G_lrCurrentSpApplied :=  GVL_SecNode.G_st_currentsp.lrTarget;",
-          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled;"
+          "write_stmt": "G_lrCurrentSpApplied :=  GVL_SecNode.G_st_currentsp.lrTarget",
+          "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled"
         },
         "clear_errors": {
           "cmd_stmt": ""

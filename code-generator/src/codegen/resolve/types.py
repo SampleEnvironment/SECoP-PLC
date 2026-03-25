@@ -108,6 +108,8 @@ class ResolvedCustomParameter:
     is_numeric: bool
     is_enum: bool
     is_string: bool
+    is_array: bool = False
+    is_tuple: bool = False
     members: Optional[dict[str, int]] = None
 
 
@@ -167,6 +169,8 @@ class ResolvedValue:
     is_numeric: bool
     is_enum: bool
     is_string: bool
+    is_array: bool
+    is_tuple: bool
     has_min_max: Optional[bool]
     has_out_of_range: Optional[bool]
     members: Optional[dict[str, int]]
