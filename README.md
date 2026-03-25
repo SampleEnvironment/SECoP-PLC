@@ -25,7 +25,7 @@ The generator is intended to be used from a Python IDE such as PyCharm.
 
 It produces:
 - a validation report
-- XML files containing PLC code (importable from the PLC IDE)
+- a PLCOpenXML file containing PLC code (importable from the PLC IDE)
 - a task list for manual PLC integration work
 
 The validation report is the result of applying the project business rules to the input configuration file.  
@@ -109,7 +109,7 @@ Once the library project has been updated:
    - Fix validation errors and complete any missing configuration fields.
 
 5. **Import the generated outputs into the PLC project**
-   - Import all generated PLCopenXML files containing the SEC Node code into the PLC project.
+   - Import the generated PLCopenXML file containing the SEC Node code into the PLC project.
    - Add POU calls to PLC Task Configuration, in this order: `SecopMapFromPlc`, `SECOP.Server`, `SecopMapToPlc`
 
 6. **Complete the remaining PLC implementation using the task list**
