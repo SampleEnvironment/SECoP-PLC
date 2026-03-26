@@ -39,6 +39,7 @@ That keeps the wiring generic and stable even as the resolve layer evolves.
 from __future__ import annotations
 
 from codegen.resolve.types import ResolvedModuleClass, ResolvedModuleClasses
+from codegen.tasklist import TaskList
 
 
 def _pascal_case_module_name(modname: str) -> str:
@@ -182,6 +183,7 @@ def _emit_drivable_mappings(modname: str) -> list[str]:
 def _emit_module_specific_mappings(
     modname: str,
     resolved_class: ResolvedModuleClass,
+    tasklist: TaskList,
 ) -> list[str]:
     """
     Emit mappings for all module-specific variables from the resolved model.
@@ -195,22 +197,49 @@ def _emit_module_specific_mappings(
     - xClearErrors
     - customised parameters
     - customised commands
+
+    Variables with open-ended types (array, tuple) are skipped — no automatic
+    PLC variable exists for them. A task comment is emitted instead.
     """
     lines: list[str] = []
     lines.append(" // Module-specific")
 
-    vars_ = resolved_class.module_variables
-    for idx, var in enumerate(vars_):
-        is_last = idx == len(vars_) - 1
+    # Filter out vars with open-ended types so we can determine the last
+    # mappable variable (needed to place the closing ");" correctly).
+    mappable = [v for v in resolved_class.module_variables if "(*TODO:" not in v.plc_type]
+    manual   = [v for v in resolved_class.module_variables if "(*TODO:" in v.plc_type]
+
+    for idx, var in enumerate(mappable):
+        is_last = idx == len(mappable) - 1 and not manual
         suffix = ");" if is_last else ","
         lines.append(
             f"    iq_{var.name:<26} := GVL_SecNode.G_st_{modname}.{var.name}{suffix}"
         )
 
+    if manual:
+        # Close the FB call before the task comments
+        if mappable:
+            # Remove trailing comma from last mappable line and add ");"
+            lines[-1] = lines[-1].rstrip(",") + ");"
+        else:
+            # No mappable vars at all — close the call now
+            lines.append(");")
+
+        for var in manual:
+            task_comment = tasklist.make_st_comment(
+                plc_path=f"FB_SecopProcessModules.Run.{modname}",
+                message=(
+                    f"Manual FB-to-GVL_SecNode value mapping is required for "
+                    f"module '{modname}' because the value type is not supported "
+                    "by automatic generation."
+                ),
+            )
+            lines.append(f"    {task_comment}")
+
     return lines
 
 
-def _emit_run_body(resolved: ResolvedModuleClasses) -> list[str]:
+def _emit_run_body(resolved: ResolvedModuleClasses, tasklist: TaskList) -> list[str]:
     """
     Emit the body of METHOD Run.
 
@@ -257,13 +286,13 @@ def _emit_run_body(resolved: ResolvedModuleClasses) -> list[str]:
             lines.extend(_emit_drivable_mappings(modname))
 
         # Module-specific
-        lines.extend(_emit_module_specific_mappings(modname, resolved_class))
+        lines.extend(_emit_module_specific_mappings(modname, resolved_class, tasklist))
         lines.append("")
 
     return lines
 
 
-def emit_fb_process_modules(resolved: ResolvedModuleClasses) -> str:
+def emit_fb_process_modules(resolved: ResolvedModuleClasses, tasklist: TaskList) -> str:
     """
     Emit the full ST source for FB_SecopProcessModules.
 
@@ -282,6 +311,6 @@ def emit_fb_process_modules(resolved: ResolvedModuleClasses) -> str:
     lines.append("")
     lines.extend(_emit_run_header())
     lines.append("")
-    lines.extend(_emit_run_body(resolved))
+    lines.extend(_emit_run_body(resolved, tasklist))
 
     return "\n".join(lines) + "\n"

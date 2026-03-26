@@ -56,6 +56,8 @@ import argparse
 import json
 from pathlib import Path
 
+from codegen.version import __version__
+
 from pydantic import ValidationError
 
 from codegen.model.secnode import SecNodeConfig
@@ -93,10 +95,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="secop-plc-codegen",
         description=(
+            f"SECoP PLC Code Generator v{__version__} — "
             "Load and validate a SECoP node config (JSON), produce a normalised "
             "version, generate PLC Structured Text artefacts, and generate one "
             "PLCOpenXML file importable by the PLC IDE."
         ),
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
 
     parser.add_argument(
@@ -277,7 +286,7 @@ def main() -> int:
     # Emit the core ST artefacts that are always present in the generated
     # PLC SECoP node project.
     st_gvl = emit_gvl_secnode(resolved)
-    st_fb_process_modules = emit_fb_process_modules(resolved)
+    st_fb_process_modules = emit_fb_process_modules(resolved, tasklist)
     st_secop_init = emit_prg_secop_init(resolved_real_modules, tasklist)
     st_secop_map_from_plc = emit_prg_secop_map_from_plc(
         resolved_real_modules,
