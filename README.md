@@ -4,6 +4,55 @@ This repository contains a CODESYS library and a PLC code generator tool for cre
 
 For detailed documentation, examples and guides, please refer to the Wiki.
 
+## CODESYS library
+| | |
+|---|---|
+| **Version** | v1.0.0.0 |
+| **Source** | [project/](https://github.com/SampleEnvironment/SECoP-PLC/tree/master/project) |
+| **IDE** | CODESYS Development System 3.5 |
+| **Tested platforms** | Schneider Electric M251, M262 |
+| **Library dependencies** | JSON Utilities SL (optional) |
+| **Vendor-specific dependencies** | TcpUdpCommunication — required when using the Schneider Electric platform |
+
+## Code generator
+| | |
+|---|---|
+| **Language** | Python 3.14 |
+| **Dependencies** | [`pydantic >= 2.0`](https://github.com/SampleEnvironment/SECoP-PLC/blob/master/code-generator/requirements.txt) |
+
+---
+
+## SECoP Protocol v1.0 compliance
+
+The library implements the following features of the [SECoP specification](https://sampleenvironment.github.io/secop-site/):
+
+### Messages
+- All [mandatory messages](https://sampleenvironment.github.io/secop-site/specification/messages.html#messages)
+- [Timestamp qualifier](https://sampleenvironment.github.io/secop-site/specification/reports.html#qualifiers)
+
+### Descriptive data
+- All mandatory [SEC node properties](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#sec-node-description), plus optional `firmware` and `implementor`
+- All mandatory [module properties](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#module-description), plus optional `implementor` and `implementation`
+- All mandatory [parameter properties](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#module-description), plus optional `target_limits`
+
+### Data types
+All [data types](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#module-description) are supported, except: `scaled` (not required, as scaling can be done on the PLC side), `blob`, `matrix`
+
+> **Note:** `bool` must be declared as an `enum` (e.g. `"members": {"stopped": 0, "running": 1}`).  
+> Non-elementary types with unlimited structural possibilities (e.g. `tuple`) are supported but may require manual coding at the PLC application level.  
+> The types `double`, `int`, `enum`, and `string` produce mapping code automatically.
+
+### Module classes and accessibles
+- Base classes: `Readable`, `Writable`, `Drivable`, including the optional `clear_errors` command
+- All [basic parameters](https://sampleenvironment.github.io/secop-site/specification/accessibles.html#basic-parameters)
+- Commands: [`stop`](https://sampleenvironment.github.io/secop-site/specification/accessibles.html#basic-parameters) and optional [`clear_errors`](https://sampleenvironment.github.io/secop-site/specification/accessibles.html#error-handling); custom commands require manual integration in the PLC application
+
+### Status codes
+Main [status codes](https://sampleenvironment.github.io/secop-site/specification/accessibles.html#status-codes) implemented: `DISABLED` (0), `IDLE` (100), `WARN` (200), `BUSY` (300), `ERROR` (400)
+
+---
+
+
 ---
 
 ## 1. What is inside and how to use it
