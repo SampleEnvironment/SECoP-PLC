@@ -855,6 +855,11 @@ def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> list[Finding]
     R-ACC-008:
     In Writable and Drivable modules, target and target_limits must use the same
     datainfo.type as value.
+
+    Additional check for string type: target.datainfo.maxchars must equal
+    value.datainfo.maxchars, because both sides map to the same PLC STRING(n)
+    variable and an inconsistent size would cause a silent truncation or compile
+    error.
     """
     findings: list[Finding] = []
 
@@ -866,8 +871,11 @@ def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> list[Finding]
         if "value" not in accs or "target" not in accs:
             continue
 
-        value_type = (accs["value"].datainfo.type or "").strip()
-        target_type = (accs["target"].datainfo.type or "").strip()
+        value_di = accs["value"].datainfo
+        target_di = accs["target"].datainfo
+
+        value_type = (value_di.type or "").strip()
+        target_type = (target_di.type or "").strip()
 
         if target_type != value_type:
             findings.append(
@@ -881,6 +889,26 @@ def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> list[Finding]
                     ),
                 )
             )
+
+        # For string types, maxchars must also match — both sides map to the
+        # same PLC STRING(n) declaration and a mismatch would cause truncation.
+        if value_type == "string" and target_type == "string":
+            value_maxchars = value_di.maxchars
+            target_maxchars = target_di.maxchars
+            if value_maxchars != target_maxchars:
+                findings.append(
+                    Finding(
+                        rule_id="R-ACC-008",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.target.datainfo.maxchars",
+                        message=(
+                            "target.datainfo.maxchars must match "
+                            f"value.datainfo.maxchars. "
+                            f"value.maxchars={value_maxchars}, "
+                            f"target.maxchars={target_maxchars}."
+                        ),
+                    )
+                )
 
         if "target_limits" in accs:
             lim_type = (accs["target_limits"].datainfo.type or "").strip()

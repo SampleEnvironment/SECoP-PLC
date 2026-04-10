@@ -15,6 +15,7 @@ Design notes
 
 from __future__ import annotations
 
+import re
 
 from codegen.resolve.types import (
     ResolvedCustomParameter,
@@ -60,6 +61,15 @@ def _value_to_string_expr(resolved: ResolvedModuleClass, var_ref: str) -> str:
     if resolved.value.is_numeric:
         return f"{_to_string_func_for_plc_type(resolved.value.plc_type)}({var_ref})"
     raise ValueError("value_to_string_expr only supports numeric/enum values")
+
+
+def _string_max_len(plc_type: str) -> int:
+    """
+    Extract the declared max length from a STRING plc_type, e.g. STRING(30) → 30.
+    Falls back to 255 if the format is not recognised.
+    """
+    m = re.search(r'\((\d+)\)', plc_type)
+    return int(m.group(1)) if m else 255
 
 
 def _target_temp_var_name(resolved: ResolvedModuleClass) -> str:
@@ -170,6 +180,63 @@ def _emit_target_report_lines(action_expr: str, resolved: ResolvedModuleClass) -
         accessible_literal="target",
         data_expr=_value_to_string_expr(resolved, target_var),
     )
+
+
+def _target_data_report_lines(
+    resolved: ResolvedModuleClass,
+    target_var: str,
+    action: str,
+    accessible_expr: str,
+    indent: str,
+) -> list[str]:
+    """
+    Return ST lines for a target data-report with a caller-supplied indent.
+
+    Handles both cases:
+    - string value  -> M_JsonEncodeString + M_AddDataReportToReplyMessage
+    - numeric/enum  -> M_AddDataReportToReplyMessage with inline conversion
+
+    action:          ST expression for the action, e.g. "'changed'" or "'update'"
+    accessible_expr: ST expression for the accessible, e.g. "'target'" or
+                     "i_sAccessible" (in places where it is a run-time variable)
+    indent:          whitespace prefix prepended to every emitted line
+    """
+    if resolved.value.is_string:
+        return [
+            f"{indent}M_JsonEncodeString(i_sRawString:= {target_var}, q_sJsonString => sBuiltDataReport); // Json-encode string and store it in sBuiltDataReport",
+            f"{indent}M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := {action}, i_sAccessible := {accessible_expr}, i_sDataReport:= sBuiltDataReport); // target",
+        ]
+    data_expr = _value_to_string_expr(resolved, target_var)
+    return [
+        f"{indent}M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := {action}, i_sAccessible := {accessible_expr}, i_sDataReport:= {data_expr}); // target"
+    ]
+
+
+def _value_data_report_lines(
+    resolved: ResolvedModuleClass,
+    action: str,
+    indent: str,
+) -> list[str]:
+    """
+    Return ST lines for a value data-report with a caller-supplied indent.
+
+    Handles both cases:
+    - string value  -> M_JsonEncodeString + M_AddDataReportToReplyMessage
+    - numeric/enum  -> M_AddDataReportToReplyMessage with inline conversion
+
+    action: ST expression for the action, e.g. "'change'" or "'update'"
+    indent: whitespace prefix prepended to every emitted line
+    """
+    value_var = f"iq_{resolved.value.var_prefix}Value"
+    if resolved.value.is_string:
+        return [
+            f"{indent}M_JsonEncodeString(i_sRawString:= {value_var}, q_sJsonString => sBuiltDataReport); // Json-encode string and store it in sBuiltDataReport",
+            f"{indent}M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := {action}, i_sAccessible := 'value', i_sDataReport:= sBuiltDataReport); // value",
+        ]
+    data_expr = _value_to_string_expr(resolved, value_var)
+    return [
+        f"{indent}M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := {action}, i_sAccessible := 'value', i_sDataReport:= {data_expr}); // value"
+    ]
 
 
 def _emit_custom_parameter_report_lines(
@@ -486,9 +553,11 @@ def emit_var_internal(resolved: ResolvedModuleClass) -> list[str]:
     lines.append(" xUpdateAllSubscribers: BOOL;")
     lines.append(" xPollIntervalDone: BOOL;")
 
-    if resolved.interface_class == "Drivable" and (resolved.value.is_numeric or resolved.value.is_enum):
+    if resolved.interface_class == "Drivable":
         if resolved.value.is_enum:
             drive_prefix = "i"
+        elif resolved.value.is_string:
+            drive_prefix = "s"
         else:
             drive_prefix = resolved.value.var_prefix
 
@@ -707,8 +776,14 @@ def _emit_numeric_change_target(resolved: ResolvedModuleClass) -> list[str]:
         lines.append("      iq_stTargetDrive.uiState := 1;")
     else:
         lines.append(f"      iq_{p}Target := {limit_expr};")
-        lines.append(
-            f"      M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'changed', i_sAccessible := i_sAccessible, i_sDataReport:= {_value_to_string_expr(resolved, f'iq_{p}Target')});"
+        lines.extend(
+            _target_data_report_lines(
+                resolved=resolved,
+                target_var=f"iq_{p}Target",
+                action="'changed'",
+                accessible_expr="i_sAccessible",
+                indent="      ",
+            )
         )
         lines.append("      xTargetChanged := TRUE;")
         lines.append("      iq_stTargetWrite.stTargetChangeClient.sIp := i_stClientMonitored.sIp;")
@@ -772,6 +847,41 @@ def _emit_enum_change_target(resolved: ResolvedModuleClass) -> list[str]:
     return lines
 
 
+def _emit_string_change_target(resolved: ResolvedModuleClass) -> list[str]:
+    """
+    Emit the target-change inner block for a string-valued Writable or Drivable module.
+
+    Validation: reject if the incoming data looks like a number, or if it
+    exceeds the declared STRING max length.
+    Apply (Writable):  decode JSON string from i_sData into iq_sTarget via
+                       M_JsonDecodeString; report i_sData (already JSON) back to client.
+    Apply (Drivable):  store raw JSON in iq_sTargetChangeNewVal; the drive state
+                       machine will decode it when the target is actually applied.
+    """
+    lines: list[str] = []
+
+    max_len = _string_max_len(resolved.value.plc_type)
+
+    lines.append(f"    IF M_CheckIfDataIsNumeric(i_sDataToParse:= i_sData, i_xMustBeInteger:= FALSE) OR StrLenA(pstData:= ADR(i_sData)) > {max_len} THEN // Unexpected data type")
+    lines.append('     A_ReturnErrorWrongType(); // Return "WrongType" error')
+    lines.append("    ")
+    lines.append("    ELSE // Apply new target value")
+    if resolved.interface_class == "Drivable":
+        lines.append("     M_JsonDecodeString(i_sJsonString:= i_sData, q_sRawString=> iq_sTargetChangeNewVal);")
+        lines.append("     M_UpdateTargetDriveClientList(i_stClient:= i_stClientMonitored);")
+        lines.append("     iq_stTargetDrive.uiState := 1;")
+    else:
+        lines.append("     M_JsonDecodeString(i_sJsonString:= i_sData, q_sRawString=> iq_sTarget);")
+        lines.append("     M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'changed', i_sAccessible := i_sAccessible, i_sDataReport:= i_sData); // target")
+        lines.append("     xTargetChanged := TRUE;")
+        lines.append("     iq_stTargetWrite.stTargetChangeClient.sIp := i_stClientMonitored.sIp;")
+        lines.append("     iq_stTargetWrite.stTargetChangeClient.uiPort := i_stClientMonitored.uiPort;")
+    lines.append("    END_IF")
+    lines.append("   END_IF")
+
+    return lines
+
+
 def _emit_sync_change(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
     lines: list[str] = []
 
@@ -794,6 +904,8 @@ def _emit_sync_change(resolved: ResolvedModuleClass, tasklist: TaskList) -> list
             lines.extend(_emit_numeric_change_target(resolved))
         elif resolved.value.is_enum:
             lines.extend(_emit_enum_change_target(resolved))
+        elif resolved.value.is_string:
+            lines.extend(_emit_string_change_target(resolved))
         else:
             lines.append(
                 "    " + tasklist.make_st_comment(
@@ -859,6 +971,10 @@ def _emit_stop_apply_new_target(resolved: ResolvedModuleClass, tasklist: TaskLis
         for member_name, member_value in resolved.value.members.items():
             lines.append(f"      {member_value}: iq_etTargetChangeNewVal := ET_Module_{resolved.name}_value.{member_name};")
         lines.append("     END_CASE")
+        return lines
+
+    if resolved.value.is_string:
+        lines.append("     iq_sTargetChangeNewVal := iq_sValue; // Stop: revert target to current value")
         return lines
 
     lines.append(
@@ -983,11 +1099,7 @@ def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> lis
     if resolved.interface_class != "Drivable":
         return lines
 
-    value_expr = f"iq_{resolved.value.var_prefix}Value"
-    target_expr = f"iq_{resolved.value.var_prefix}Target"
-
-    value_report_expr = _value_to_string_expr(resolved, value_expr)
-    target_report_expr = _value_to_string_expr(resolved, target_expr)
+    target_var = f"iq_{resolved.value.var_prefix}Target"
 
     lines.append("// Target drive state machine")
     lines.append("// ----------------------------------------------------------------------------")
@@ -1011,14 +1123,14 @@ def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> lis
     lines.append("    // Send update messages")
     lines.append("    A_GenerateStatusDataReport();")
     lines.append("    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'status', i_sDataReport:= sBuiltDataReport); // Status")
-    lines.append(f"    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'value', i_sDataReport:= {value_report_expr}); // Value")
+    lines.extend(_value_data_report_lines(resolved, "'change'", "    "))
     lines.append("")
     lines.append('    // Target data is sent through a "changed" message to the client that sent the last target change request')
     lines.append('    // or through a "change" message to the rest of concerned clients')
     lines.append("    IF iq_stTargetWrite.stTargetChangeClient.sIp = i_stClientMonitored.sIp AND iq_stTargetWrite.stTargetChangeClient.uiPort = i_stClientMonitored.uiPort AND NOT iq_stTargetDrive.xStopCmd THEN")
-    lines.append(f"     M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'changed', i_sAccessible := 'target', i_sDataReport:= {target_report_expr}); // Target")
+    lines.extend(_target_data_report_lines(resolved, target_var, "'changed'", "'target'", "     "))
     lines.append("    ELSE")
-    lines.append(f"     M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'target', i_sDataReport:= {target_report_expr}); // Target")
+    lines.extend(_target_data_report_lines(resolved, target_var, "'change'", "'target'", "     "))
     lines.append("    END_IF")
     lines.append("")
     lines.append('    // A "done" message is sent to the client that sent the stop command')
@@ -1047,8 +1159,8 @@ def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> lis
     lines.append("   A_GenerateStatusDataReport();")
     lines.append("   M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'status', i_sDataReport:= sBuiltDataReport); // Status")
     lines.append("   IF NOT iq_stErrorReport.xActive THEN")
-    lines.append(f"    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'value', i_sDataReport:= {value_report_expr}); // Value")
-    lines.append(f"    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'target', i_sDataReport:= {target_report_expr}); // Target")
+    lines.extend(_value_data_report_lines(resolved, "'change'", "    "))
+    lines.extend(_target_data_report_lines(resolved, target_var, "'change'", "'target'", "    "))
     lines.append("   END_IF")
     lines.append(" ")
     lines.append("  END_IF")
@@ -1117,8 +1229,14 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
         target_expr = f"iq_{resolved.value.var_prefix}Target"
         lines.append("   // Update subscribers when changing the target")
         lines.append("   IF xTargetChanged AND NOT (iq_stTargetWrite.stTargetChangeClient.sIp = i_stClientMonitored.sIp AND iq_stTargetWrite.stTargetChangeClient.uiPort = i_stClientMonitored.uiPort) THEN")
-        lines.append(
-            f"    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'update', i_sAccessible := 'target', i_sDataReport:= {_value_to_string_expr(resolved, target_expr)}); // Target"
+        lines.extend(
+            _target_data_report_lines(
+                resolved=resolved,
+                target_var=target_expr,
+                action="'update'",
+                accessible_expr="'target'",
+                indent="    ",
+            )
         )
         lines.append("   END_IF")
 
@@ -1178,44 +1296,47 @@ def emit_target_drive_monitor_block(resolved: ResolvedModuleClass) -> list[str]:
     """
     Emit the final block that monitors target driving and updates status when done.
 
-    Only applies to Drivable modules with numeric or enum value.
+    Only applies to Drivable modules.
 
     Rules:
-    - numeric double -> lr
-    - numeric int    -> di
-    - enum           -> i
-    - enum tolerance is fixed to 0
+    - numeric LREAL -> lr, uses tolerance
+    - numeric DINT  -> di, uses tolerance
+    - enum          -> i,  tolerance fixed to 0
+    - string        -> s,  uses ADR() pointers, no tolerance
     """
     lines: list[str] = []
 
     if resolved.interface_class != "Drivable":
         return lines
 
-    if not (resolved.value.is_numeric or resolved.value.is_enum):
-        return lines
-
-    if resolved.value.is_enum:
-        mon_prefix = "i"
-        pv_expr = "iq_etValue"
-        sp_expr = "iq_etTarget"
-        tol_expr = "0"
-    else:
-        mon_prefix = resolved.value.var_prefix
-        pv_expr = f"iq_{resolved.value.var_prefix}Value"
-        sp_expr = f"iq_{resolved.value.var_prefix}Target"
-        tol_expr = f"iq_{resolved.value.var_prefix}TargetDriveTolerance"
-
     lines.append("//  3 - Monitor target driving and update module status when done")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("")
     lines.append("// Monitor process value and target value. Set q_xSpReached to TRUE if target is reached on time. Set q_xSpFail to TRUE otherwise")
-    lines.append("fbTargetDriveMonitor(i_xEnable:= iq_stTargetDrive.uiState = 3,")
-    lines.append(f"      i_{mon_prefix}Pv:= {pv_expr},")
-    lines.append(f"      i_{mon_prefix}Sp:= {sp_expr},")
-    lines.append(f"      i_{mon_prefix}Tolerance:= {tol_expr},")
-    lines.append("      i_timTimeout:= iq_stTargetDrive.timTimeout,")
-    lines.append("      q_xSpReached=> ,")
-    lines.append("      q_xSpFail=> );")
+
+    if resolved.value.is_string:
+        lines.append("fbTargetDriveMonitor(i_xEnable:= iq_stTargetDrive.uiState = 3,")
+        lines.append("      i_pbPv:= ADR(iq_sValue),")
+        lines.append("      i_pbSp:= ADR(iq_sTarget),")
+        lines.append("      i_timTimeout:= iq_stTargetDrive.timTimeout);")
+    else:
+        if resolved.value.is_enum:
+            mon_prefix = "i"
+            pv_expr = "iq_etValue"
+            sp_expr = "iq_etTarget"
+            tol_expr = "0"
+        else:
+            mon_prefix = resolved.value.var_prefix
+            pv_expr = f"iq_{resolved.value.var_prefix}Value"
+            sp_expr = f"iq_{resolved.value.var_prefix}Target"
+            tol_expr = f"iq_{resolved.value.var_prefix}TargetDriveTolerance"
+
+        lines.append("fbTargetDriveMonitor(i_xEnable:= iq_stTargetDrive.uiState = 3,")
+        lines.append(f"      i_{mon_prefix}Pv:= {pv_expr},")
+        lines.append(f"      i_{mon_prefix}Sp:= {sp_expr},")
+        lines.append(f"      i_{mon_prefix}Tolerance:= {tol_expr},")
+        lines.append("      i_timTimeout:= iq_stTargetDrive.timTimeout);")
+
     lines.append("")
     lines.append('// Set module status to Idle if target is reached on time. Generate a "TimeoutError" error otherwise')
     lines.append("M_UpdateStatusWhenDriveDone(i_xDone:= fbTargetDriveMonitor.q_xDone AND fbRtrigAllClientsDone.Q,")

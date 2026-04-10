@@ -464,10 +464,12 @@ def rule_xplc_status_disabled_fields_coherent(cfg: SecNodeConfig) -> list[Findin
     """
     R-PLC-022 / R-PLC-023:
 
-    - ERROR if x-plc.status.disabled_* is present but status enum does not
-      contain DISABLED:0
-    - WARNING if status enum contains DISABLED:0 but x-plc.status.disabled_*
-      is missing or empty
+    - R-PLC-022 ERROR: x-plc.status.disabled_* is present but status enum does
+      not contain DISABLED:0.
+    - R-PLC-023 ERROR: exactly one of disabled_expr / disabled_description is
+      configured (partial configuration).  Both absent is silently accepted —
+      the DISABLED enum member is simply not mapped to x-plc and the disabled
+      branch is omitted from generated code.
     """
     findings: list[Finding] = []
 
@@ -482,6 +484,7 @@ def rule_xplc_status_disabled_fields_coherent(cfg: SecNodeConfig) -> list[Findin
         disabled_expr_present = not _is_empty(xplc.status.disabled_expr)
         disabled_desc_present = not _is_empty(xplc.status.disabled_description)
 
+        # R-PLC-022: disabled_* present but enum has no DISABLED:0
         if (disabled_expr_present or disabled_desc_present) and (not status_has_disabled_0):
             findings.append(
                 Finding(
@@ -495,31 +498,31 @@ def rule_xplc_status_disabled_fields_coherent(cfg: SecNodeConfig) -> list[Findin
                 )
             )
 
+        # R-PLC-023: partial configuration — exactly one field present.
+        # Both absent is silently accepted (disabled branch simply not generated).
         if status_has_disabled_0:
-            if _is_empty(xplc.status.disabled_expr):
+            if disabled_expr_present and not disabled_desc_present:
                 findings.append(
                     Finding(
                         rule_id="R-PLC-023",
-                        severity=Severity.WARNING,
-                        path=f"$.modules.{mod_name}.x-plc.status.disabled_expr",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.x-plc.status.disabled_description",
                         message=(
-                            "Status enum contains DISABLED:0, but "
-                            "x-plc.status.disabled_expr is not configured. "
-                            f"{IMPLEMENTATION_WARNING_SUFFIX}"
+                            "x-plc.status.disabled_expr is configured, so "
+                            "disabled_description must also be configured."
                         ),
                     )
                 )
 
-            if _is_empty(xplc.status.disabled_description):
+            if disabled_desc_present and not disabled_expr_present:
                 findings.append(
                     Finding(
                         rule_id="R-PLC-023",
-                        severity=Severity.WARNING,
-                        path=f"$.modules.{mod_name}.x-plc.status.disabled_description",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.x-plc.status.disabled_expr",
                         message=(
-                            "Status enum contains DISABLED:0, but "
-                            "x-plc.status.disabled_description is not configured. "
-                            f"{IMPLEMENTATION_WARNING_SUFFIX}"
+                            "x-plc.status.disabled_description is configured, so "
+                            "disabled_expr must also be configured."
                         ),
                     )
                 )

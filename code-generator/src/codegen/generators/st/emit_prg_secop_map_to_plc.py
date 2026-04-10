@@ -163,6 +163,10 @@ def _emit_drivable_apply_target_block(
     )
     lines.append(f"IF fbRtrigApplyTarget_{module.module_name}.Q THEN")
 
+    # Copy TargetChangeNewVal → Target first, so that write_stmt (and enum_tag)
+    # always reference Target — the same field used for Writable modules.
+    lines.append(f" {pfx}.{module.value_var_prefix}Target := {pfx}.{module.value_var_prefix}TargetChangeNewVal;")
+
     if module.value_is_numeric or module.value_is_string:
         write_stmt = module.x_plc_target.write_stmt if module.x_plc_target else None
         if write_stmt:
@@ -185,7 +189,7 @@ def _emit_drivable_apply_target_block(
         members = _resolved_enum_members(module, resolved_classes)
 
         if enum_tag and members:
-            lines.append(f" CASE {pfx}.etTargetChangeNewVal OF")
+            lines.append(f" CASE {pfx}.etTarget OF")
             for member_name, member_value in members:
                 lines.append(
                     f"  {member_value}: {enum_tag} := ET_Module_{module.module_class_name}_value.{member_name};"
@@ -221,7 +225,6 @@ def _emit_drivable_apply_target_block(
     lines.append(f" {pfx}.stStatus.sDescription := 'BUSY';")
     lines.append(f" {pfx}.stErrorReport.sClass := '';")
     lines.append(f" {pfx}.stErrorReport.sDescription := '';")
-    lines.append(f" {pfx}.{module.value_var_prefix}Target := {pfx}.{module.value_var_prefix}TargetChangeNewVal;")
     lines.append(f" {pfx}.stTargetDrive.uiState := 2;")
     lines.append("END_IF")
     lines.append("")

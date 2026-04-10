@@ -316,13 +316,15 @@ def _emit_status_block(module: ResolvedRealModule) -> list[str]:
 
     branches_started = 0
 
-    if module.status_has_disabled and module.x_plc_status:
-        lines.append(f"IF {module.x_plc_status.disabled_expr} THEN")
+    disabled_expr = module.x_plc_status.disabled_expr if module.x_plc_status else None
+    disabled_desc = module.x_plc_status.disabled_description if module.x_plc_status else None
+    if module.status_has_disabled and disabled_expr and disabled_desc:
+        lines.append(f"IF {disabled_expr} THEN")
         lines.append(f" {pfx}.stStatus.etCode := SECOP.ET_StatusCode.Disabled;")
         lines.append(f" {pfx}.stStatus.sDescription := 'DISABLED';")
         lines.append(f" {pfx}.stErrorReport.xActive := TRUE;")
         lines.append(f" {pfx}.stErrorReport.sClass := 'DISABLED';")
-        lines.append(f" {pfx}.stErrorReport.sDescription := '{module.x_plc_status.disabled_description}';")
+        lines.append(f" {pfx}.stErrorReport.sDescription := '{disabled_desc}';")
         branches_started += 1
 
     if module.status_has_comm_error and module.x_plc_status:

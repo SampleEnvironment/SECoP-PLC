@@ -13,9 +13,6 @@ Versioning follows Semantic Versioning (SemVer): MAJOR.MINOR.PATCH
   MAJOR  Breaking changes to the configuration file schema (e.g. renaming
          x-plc fields) or to the structure of the generated output in a way
          that requires existing PLC projects to be updated.
-
-Start at 0.x while the configuration file schema is still evolving.
-Bump to 1.0.0 when the schema is considered stable.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

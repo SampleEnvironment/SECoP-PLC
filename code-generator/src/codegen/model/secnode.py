@@ -135,6 +135,9 @@ class Accessible(StrictBaseModel):
     datainfo: DataInfo
     readonly: bool = False
 
+    # Optional SECoP accessible property — content is free-form, not validated
+    meaning: Optional[Any] = None
+
 
 # ---------------------------------------------------------------------------
 # Module-level PLC/tooling configuration ("x-plc")
@@ -295,9 +298,13 @@ class Module(StrictBaseModel):
     features: list[str] = Field(default_factory=list)
 
     description: str
-    implementation: str
+    implementator: Optional[str] = None
+    implementation: Optional[str] = None
 
     accessibles: dict[str, Accessible]
+
+    # Optional SECoP module property — content is free-form, not validated
+    meaning: Optional[Any] = None
 
     # Module-level tooling data
     x_plc: Optional[PlcModuleConfig] = Field(default=None, alias="x-plc")
@@ -310,6 +317,7 @@ class SecNodeConfig(StrictBaseModel):
     equipment_id: str
     description: str
     firmware: str
+    implementor: Optional[str] = None
 
     modules: dict[str, Module]
 

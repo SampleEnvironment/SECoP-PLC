@@ -18,6 +18,11 @@ The pipeline starts from a JSON configuration file and performs the following:
 9. Convert the generated ST artefacts into one PLCOpenXML file that can be
    imported into the PLC IDE
 
+
+
+
+
+
 Design intent
 -------------
 The generator deliberately keeps two resolved views of the configuration:
