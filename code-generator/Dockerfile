@@ -1,6 +1,6 @@
-# Use the official lightweight Python 3.14 image.
+# Use the official lightweight Python 3.13 image.
 # The "slim" variant keeps the image smaller than the full Python image.
-FROM python:3.14-slim
+FROM python:3.13-slim
 
 # Prevent Python from writing .pyc files inside the container.
 ENV PYTHONDONTWRITEBYTECODE=1
