@@ -55,6 +55,9 @@ from codegen.rules.secop_rules import (
     rule_datainfo_type_supported,
     rule_status_structure_and_codes,
     rule_value_type_requires_manual_implementation,
+    rule_target_range_restriction_mutually_exclusive,
+    rule_target_range_restriction_requires_numeric_target,
+    rule_target_range_restriction_requires_target_range,
 )
 from codegen.rules.plc_rules import (
     rule_xplc_keys_exist_in_secop_accessibles,
@@ -109,6 +112,9 @@ def validate_config(cfg: SecNodeConfig) -> list[Finding]:
     findings.extend(rule_datainfo_type_supported(cfg))                   # R-DI-001
     findings.extend(rule_status_structure_and_codes(cfg))                # R-STAT-001/002/003/004/005
     findings.extend(rule_value_type_requires_manual_implementation(cfg)) # R-ACC-011
+    findings.extend(rule_target_range_restriction_mutually_exclusive(cfg))         # R-ACC-012
+    findings.extend(rule_target_range_restriction_requires_numeric_target(cfg))    # R-ACC-013
+    findings.extend(rule_target_range_restriction_requires_target_range(cfg))      # R-ACC-014
 
     # ------------------------------------------------------------------
     # PLC / x-plc rules

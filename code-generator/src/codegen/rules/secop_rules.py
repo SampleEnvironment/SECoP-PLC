@@ -319,8 +319,8 @@ def rule_forbidden_accessibles_by_class(cfg: SecNodeConfig) -> list[Finding]:
 
     allowed_by_class = {
         "Readable": {"value", "status", "pollinterval", "clear_errors"},
-        "Writable": {"value", "status", "pollinterval", "target", "target_limits", "clear_errors"},
-        "Drivable": {"value", "status", "pollinterval", "target", "target_limits", "clear_errors", "stop"},
+        "Writable": {"value", "status", "pollinterval", "target", "target_limits", "target_min", "target_max", "clear_errors"},
+        "Drivable": {"value", "status", "pollinterval", "target", "target_limits", "target_min", "target_max", "clear_errors", "stop"},
     }
 
     for mod_name, mod in cfg.modules.items():
@@ -625,7 +625,7 @@ def rule_numeric_ranges_must_define_both_ends(cfg: SecNodeConfig) -> list[Findin
     """
     findings: list[Finding] = []
 
-    checked_accessibles = {"value", "target", "target_limits"}
+    checked_accessibles = {"value", "target", "target_limits", "target_min", "target_max"}
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -675,48 +675,98 @@ def rule_numeric_ranges_must_define_both_ends(cfg: SecNodeConfig) -> list[Findin
 def rule_target_limits_within_target(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-004:
-    If target_limits exists, it must restrict target.
+    Range restriction parameters must stay within the absolute target range.
 
-    This rule is only enforced when the relevant values are present.
+    Checks enforced (all only when the relevant values are present):
+    - target_limits scalar (old): min >= target.min, max <= target.max
+    - target_limits tuple (v2.0): both members — .min >= target.min and
+                                   .max <= target.max (checked for each member)
+    - target_min: datainfo.min >= target.min, datainfo.max <= target.max
+    - target_max: datainfo.min >= target.min, datainfo.max <= target.max
     """
     findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         accessibles = mod.accessibles or {}
 
-        if "target" not in accessibles or "target_limits" not in accessibles:
+        if "target" not in accessibles:
             continue
 
         target_di = accessibles["target"].datainfo
-        limits_di = accessibles["target_limits"].datainfo
 
-        if (
-            target_di.min is not None
-            and limits_di.min is not None
-            and limits_di.min < target_di.min
-        ):
-            findings.append(
-                Finding(
-                    rule_id="R-ACC-004",
-                    severity=Severity.ERROR,
-                    path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo",
-                    message="target_limits.min must be >= target.min.",
-                )
-            )
+        # --- target_limits ---
+        if "target_limits" in accessibles:
+            limits_di = accessibles["target_limits"].datainfo
 
-        if (
-            target_di.max is not None
-            and limits_di.max is not None
-            and limits_di.max > target_di.max
-        ):
-            findings.append(
-                Finding(
-                    rule_id="R-ACC-004",
-                    severity=Severity.ERROR,
-                    path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo",
-                    message="target_limits.max must be <= target.max.",
-                )
-            )
+            if limits_di.type == "tuple":
+                # v2.0 tuple format: members[0] = lower bound, members[1] = upper bound.
+                # Both members define the allowed range for their respective limit value,
+                # so both .min and .max of each member must lie within the absolute
+                # target range.
+                members = limits_di.members if isinstance(limits_di.members, list) else []
+                for i, member in enumerate(members[:2]):
+                    if not isinstance(member, dict):
+                        continue
+                    m_min = member.get("min")
+                    m_max = member.get("max")
+                    if target_di.min is not None and m_min is not None and m_min < target_di.min:
+                        findings.append(Finding(
+                            rule_id="R-ACC-004", severity=Severity.ERROR,
+                            path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo.members[{i}].min",
+                            message=f"target_limits tuple member[{i}].min must be >= target.min.",
+                        ))
+                    if target_di.max is not None and m_max is not None and m_max > target_di.max:
+                        findings.append(Finding(
+                            rule_id="R-ACC-004", severity=Severity.ERROR,
+                            path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo.members[{i}].max",
+                            message=f"target_limits tuple member[{i}].max must be <= target.max.",
+                        ))
+            else:
+                # scalar format (old)
+                if target_di.min is not None and limits_di.min is not None and limits_di.min < target_di.min:
+                    findings.append(Finding(
+                        rule_id="R-ACC-004", severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo",
+                        message="target_limits.min must be >= target.min.",
+                    ))
+                if target_di.max is not None and limits_di.max is not None and limits_di.max > target_di.max:
+                    findings.append(Finding(
+                        rule_id="R-ACC-004", severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo",
+                        message="target_limits.max must be <= target.max.",
+                    ))
+
+        # --- target_min datainfo bounds ---
+        if "target_min" in accessibles:
+            tmin_di = accessibles["target_min"].datainfo
+            if target_di.min is not None and tmin_di.min is not None and tmin_di.min < target_di.min:
+                findings.append(Finding(
+                    rule_id="R-ACC-004", severity=Severity.ERROR,
+                    path=f"$.modules.{mod_name}.accessibles.target_min.datainfo.min",
+                    message="target_min.datainfo.min must be >= target.datainfo.min (absolute lower limit).",
+                ))
+            if target_di.max is not None and tmin_di.max is not None and tmin_di.max > target_di.max:
+                findings.append(Finding(
+                    rule_id="R-ACC-004", severity=Severity.ERROR,
+                    path=f"$.modules.{mod_name}.accessibles.target_min.datainfo.max",
+                    message="target_min.datainfo.max must be <= target.datainfo.max (absolute upper limit).",
+                ))
+
+        # --- target_max datainfo bounds ---
+        if "target_max" in accessibles:
+            tmax_di = accessibles["target_max"].datainfo
+            if target_di.min is not None and tmax_di.min is not None and tmax_di.min < target_di.min:
+                findings.append(Finding(
+                    rule_id="R-ACC-004", severity=Severity.ERROR,
+                    path=f"$.modules.{mod_name}.accessibles.target_max.datainfo.min",
+                    message="target_max.datainfo.min must be >= target.datainfo.min (absolute lower limit).",
+                ))
+            if target_di.max is not None and tmax_di.max is not None and tmax_di.max > target_di.max:
+                findings.append(Finding(
+                    rule_id="R-ACC-004", severity=Severity.ERROR,
+                    path=f"$.modules.{mod_name}.accessibles.target_max.datainfo.max",
+                    message="target_max.datainfo.max must be <= target.datainfo.max (absolute upper limit).",
+                ))
 
     return findings
 
@@ -781,28 +831,30 @@ def rule_array_requires_maxlen(cfg: SecNodeConfig) -> list[Finding]:
 def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-007:
-    Enforce the current readonly policy for this PLC SEC node.
+    Enforce the readonly policy for standard accessibles in this PLC SEC node.
 
-    Project policy:
-    - command accessibles are always writable conceptually:
-        * readonly=true is forbidden
-        * readonly=false is accepted
-    - for non-command accessibles, readonly=false is allowed only for:
-        * target
-        * pollinterval
-    - every other non-command accessible must have readonly=true
+    Policy:
+    - commands:      readonly=true is forbidden (commands are always writable)
+    - target:        must have readonly=false
+    - pollinterval:  must have readonly=false
+    - target_min:    must have readonly=false — use target_limits with readonly=true
+                     if a non-changeable range restriction is needed
+    - target_max:    same as target_min
+    - target_limits: readonly=true or readonly=false are both accepted
+    - all others:    must have readonly=true
     """
     findings: list[Finding] = []
 
-    writable_allowed = {"target", "pollinterval"}
+    # These must always be writable; readonly=true is an error.
+    must_be_writable = {"target", "pollinterval", "target_min", "target_max"}
+    # This one accepts either value; no readonly constraint.
+    readonly_flexible = {"target_limits"}
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
             acc_type = (acc.datainfo.type or "").strip()
 
-            # Commands are conceptually writable.
-            # Because the Pydantic model defaults readonly to False, we only
-            # reject the contradictory case readonly=True.
+            # Commands are conceptually writable; readonly=true is contradictory.
             if acc_type == "command":
                 if acc.readonly is True:
                     findings.append(
@@ -818,10 +870,15 @@ def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> list[Finding
                     )
                 continue
 
-            expected_readonly = acc_name not in writable_allowed
+            # target_limits: both readonly=true and readonly=false are valid.
+            if acc_name in readonly_flexible:
+                continue
+
+            expected_readonly = acc_name not in must_be_writable
 
             if acc.readonly != expected_readonly:
                 if expected_readonly:
+                    # Should be readonly but is not.
                     findings.append(
                         Finding(
                             rule_id="R-ACC-007",
@@ -829,23 +886,38 @@ def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> list[Finding
                             path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
                             message=(
                                 "Current PLC SEC node implements readonly=false "
-                                "only for the parameters 'target' and "
-                                "'pollinterval'."
+                                "only for: target, pollinterval, target_min, target_max, "
+                                "and target_limits (which also accepts readonly=true)."
                             ),
                         )
                     )
                 else:
-                    findings.append(
-                        Finding(
-                            rule_id="R-ACC-007",
-                            severity=Severity.ERROR,
-                            path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
-                            message=(
-                                f"Accessible '{acc_name}' must have readonly=false "
-                                "in this PLC SEC node configuration."
-                            ),
+                    # Must be writable but readonly=true was set.
+                    if acc_name in ("target_min", "target_max"):
+                        findings.append(
+                            Finding(
+                                rule_id="R-ACC-007",
+                                severity=Severity.ERROR,
+                                path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
+                                message=(
+                                    f"Accessible '{acc_name}' must have readonly=false. "
+                                    "If you need a non-changeable target range restriction, "
+                                    "use 'target_limits' with readonly=true instead."
+                                ),
+                            )
                         )
-                    )
+                    else:
+                        findings.append(
+                            Finding(
+                                rule_id="R-ACC-007",
+                                severity=Severity.ERROR,
+                                path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
+                                message=(
+                                    f"Accessible '{acc_name}' must have readonly=false "
+                                    "in this PLC SEC node configuration."
+                                ),
+                            )
+                        )
 
     return findings
 
@@ -911,20 +983,37 @@ def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> list[Finding]
                 )
 
         if "target_limits" in accs:
-            lim_type = (accs["target_limits"].datainfo.type or "").strip()
-            if lim_type != value_type:
-                findings.append(
-                    Finding(
-                        rule_id="R-ACC-008",
-                        severity=Severity.ERROR,
-                        path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo.type",
-                        message=(
-                            "target_limits.datainfo.type must match "
-                            f"value.datainfo.type. value.type='{value_type}', "
-                            f"target_limits.type='{lim_type}'."
-                        ),
-                    )
-                )
+            limits_di = accs["target_limits"].datainfo
+            lim_type = (limits_di.type or "").strip()
+
+            if lim_type == "tuple":
+                # v2.0 format: both tuple members must match value type
+                members = limits_di.members if isinstance(limits_di.members, list) else []
+                for i, member in enumerate(members[:2]):
+                    if not isinstance(member, dict):
+                        continue
+                    m_type = (member.get("type") or "").strip()
+                    if m_type and m_type != value_type:
+                        findings.append(Finding(
+                            rule_id="R-ACC-008", severity=Severity.ERROR,
+                            path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo.members[{i}].type",
+                            message=(
+                                f"target_limits tuple member[{i}].type must match "
+                                f"value.datainfo.type. value.type='{value_type}', "
+                                f"member[{i}].type='{m_type}'."
+                            ),
+                        ))
+            elif lim_type != value_type:
+                # scalar (old) format: type must match directly
+                findings.append(Finding(
+                    rule_id="R-ACC-008", severity=Severity.ERROR,
+                    path=f"$.modules.{mod_name}.accessibles.target_limits.datainfo.type",
+                    message=(
+                        "target_limits.datainfo.type must match "
+                        f"value.datainfo.type. value.type='{value_type}', "
+                        f"target_limits.type='{lim_type}'."
+                    ),
+                ))
 
     return findings
 
@@ -1198,5 +1287,122 @@ def rule_value_type_requires_manual_implementation(cfg: SecNodeConfig) -> list[F
                 ),
             )
         )
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# SECoP v2.0 parameter postfix rules (_min, _max, _limits)
+# ---------------------------------------------------------------------------
+
+_RANGE_RESTRICTION_ACCESSIBLES = {"target_limits", "target_min", "target_max"}
+
+
+def rule_target_range_restriction_mutually_exclusive(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-ACC-012:
+    target_limits and the pair target_min / target_max are mutually exclusive.
+
+    SECoP v2.0 spec: these two forms of range restriction may not coexist on the
+    same module.
+    """
+    findings: list[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        accs = mod.accessibles or {}
+        has_limits = "target_limits" in accs
+        has_individual = "target_min" in accs or "target_max" in accs
+
+        if has_limits and has_individual:
+            findings.append(Finding(
+                rule_id="R-ACC-012",
+                severity=Severity.ERROR,
+                path=f"$.modules.{mod_name}.accessibles",
+                message=(
+                    "target_limits and target_min/target_max are mutually exclusive. "
+                    "Use either target_limits (tuple) or individual target_min/target_max, not both."
+                ),
+            ))
+
+    return findings
+
+
+def rule_target_range_restriction_requires_numeric_target(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-ACC-013:
+    target_min, target_max and target_limits are only allowed when target is a
+    numeric scalar type (double or int).
+
+    Range restriction has no meaning for enum, string or compound types.
+    """
+    findings: list[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        accs = mod.accessibles or {}
+
+        restriction_present = _RANGE_RESTRICTION_ACCESSIBLES & accs.keys()
+        if not restriction_present:
+            continue
+
+        target = accs.get("target")
+        if target is None:
+            continue  # missing target caught by R-CLS-002
+
+        target_type = (target.datainfo.type or "").strip()
+        if target_type not in NUMERIC_TYPES_THIS_CODEGEN:
+            for acc_name in sorted(restriction_present):
+                findings.append(Finding(
+                    rule_id="R-ACC-013",
+                    severity=Severity.ERROR,
+                    path=f"$.modules.{mod_name}.accessibles.{acc_name}",
+                    message=(
+                        f"'{acc_name}' is only allowed when target.datainfo.type is a "
+                        f"numeric scalar ('double' or 'int'). "
+                        f"Current target.type='{target_type}'."
+                    ),
+                ))
+
+    return findings
+
+
+def rule_target_range_restriction_requires_target_range(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-ACC-014:
+    If any range restriction is configured (target_limits, target_min or
+    target_max), target.datainfo.min and target.datainfo.max must also be
+    configured.
+
+    The target range serves as the absolute limits: restriction parameters can
+    narrow it further but must not exceed it (enforced by R-ACC-004).
+    """
+    findings: list[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        accs = mod.accessibles or {}
+
+        restriction_present = _RANGE_RESTRICTION_ACCESSIBLES & accs.keys()
+        if not restriction_present:
+            continue
+
+        target = accs.get("target")
+        if target is None:
+            continue  # missing target caught by R-CLS-002
+
+        target_di = target.datainfo
+        if target_di.min is None or target_di.max is None:
+            findings.append(Finding(
+                rule_id="R-ACC-014",
+                severity=Severity.ERROR,
+                path=f"$.modules.{mod_name}.accessibles.target.datainfo",
+                message=(
+                    "target.datainfo.min and target.datainfo.max must be configured "
+                    "when using range restriction parameters "
+                    f"({', '.join(sorted(restriction_present))}). "
+                    "The target range defines the absolute limits that restriction "
+                    "parameters may not exceed."
+                ),
+            ))
+
+    return findings
 
     return findings

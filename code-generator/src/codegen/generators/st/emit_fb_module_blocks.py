@@ -287,6 +287,75 @@ def _emit_pollinterval_report_lines(action_expr: str) -> list[str]:
     ]
 
 
+def _emit_report_target_min(action_expr: str, resolved: ResolvedModuleClass) -> list[str]:
+    """
+    Emit report lines for the 'target_min' accessible.
+    Reports the current value of TargetLimitsMin.
+    Only valid for numeric targets.
+    """
+    p = resolved.value.var_prefix
+    to_str = _to_string_func_for_plc_type(resolved.value.plc_type)
+    return _emit_numeric_or_enum_data_report(
+        action_expr=action_expr,
+        accessible_literal="target_min",
+        data_expr=f"{to_str}(iq_{p}TargetLimitsMin)",
+    )
+
+
+def _emit_report_target_max(action_expr: str, resolved: ResolvedModuleClass) -> list[str]:
+    """
+    Emit report lines for the 'target_max' accessible.
+    Reports the current value of TargetLimitsMax.
+    Only valid for numeric targets.
+    """
+    p = resolved.value.var_prefix
+    to_str = _to_string_func_for_plc_type(resolved.value.plc_type)
+    return _emit_numeric_or_enum_data_report(
+        action_expr=action_expr,
+        accessible_literal="target_max",
+        data_expr=f"{to_str}(iq_{p}TargetLimitsMax)",
+    )
+
+
+def _emit_report_target_limits_tuple(action_expr: str, resolved: ResolvedModuleClass) -> list[str]:
+    """
+    Emit report lines for the 'target_limits' accessible (tuple form).
+
+    Calls M_GenerateTargetLimitsDataReport first to build sBuiltDataReport,
+    then M_AddDataReportToReplyMessage with that pre-built report.
+    Only valid for numeric targets.
+    """
+    p = resolved.value.var_prefix
+    to_str = _to_string_func_for_plc_type(resolved.value.plc_type)
+    return [
+        f"  M_GenerateTargetLimitsDataReport(i_sLimitsMin:= {to_str}(iq_{p}TargetLimitsMin), i_sLimitsMax:= {to_str}(iq_{p}TargetLimitsMax)); // Generate target limits data report and store it in sBuiltDataReport",
+        f"  M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := {action_expr}, i_sAccessible := 'target_limits', i_sDataReport:= sBuiltDataReport); // target_limits",
+    ]
+
+
+def _emit_limits_report_lines(action_expr: str, resolved: ResolvedModuleClass) -> list[str]:
+    """
+    Emit report lines for all configured limits accessibles in order:
+    target_min, target_max, target_limits (tuple).
+
+    Returns empty list when resolved.target is None or no limits are configured.
+    """
+    if resolved.target is None:
+        return []
+
+    t = resolved.target
+    lines: list[str] = []
+
+    if t.has_limits_min:
+        lines.extend(_emit_report_target_min(action_expr, resolved))
+    if t.has_limits_max:
+        lines.extend(_emit_report_target_max(action_expr, resolved))
+    if t.has_limits_tuple:
+        lines.extend(_emit_report_target_limits_tuple(action_expr, resolved))
+
+    return lines
+
+
 def _emit_all_parameter_reports(action_expr: str, resolved: ResolvedModuleClass, tasklist: TaskList, context: str = "") -> list[str]:
     """
     Emit report lines for all readable parameters of the module.
@@ -300,7 +369,6 @@ def _emit_all_parameter_reports(action_expr: str, resolved: ResolvedModuleClass,
 
     Not included:
     - commands
-    - target_limits
     """
     lines: list[str] = []
 
@@ -309,6 +377,7 @@ def _emit_all_parameter_reports(action_expr: str, resolved: ResolvedModuleClass,
 
     if resolved.target is not None:
         lines.extend(_emit_target_report_lines(action_expr, resolved))
+        lines.extend(_emit_limits_report_lines(action_expr, resolved))
 
     for cp in resolved.custom_parameters:
         lines.extend(_emit_custom_parameter_report_lines(action_expr, cp, tasklist))
@@ -342,6 +411,17 @@ def _emit_read_parameter_chain(resolved: ResolvedModuleClass, tasklist: TaskList
         lines.append("  ELSIF i_sAccessible = 'target' THEN")
         lines.extend(_indent(_emit_target_report_lines("i_sAction", resolved), 1))
 
+        t = resolved.target
+        if t.has_limits_min:
+            lines.append("  ELSIF i_sAccessible = 'target_min' THEN")
+            lines.extend(_indent(_emit_report_target_min("i_sAction", resolved), 1))
+        if t.has_limits_max:
+            lines.append("  ELSIF i_sAccessible = 'target_max' THEN")
+            lines.extend(_indent(_emit_report_target_max("i_sAction", resolved), 1))
+        if t.has_limits_tuple:
+            lines.append("  ELSIF i_sAccessible = 'target_limits' THEN")
+            lines.extend(_indent(_emit_report_target_limits_tuple("i_sAction", resolved), 1))
+
     for cp in resolved.custom_parameters:
         lines.append(f"  ELSIF i_sAccessible = '{cp.secop_name}' THEN")
         lines.extend(_indent(_emit_custom_parameter_report_lines("i_sAction", cp, tasklist), 1))
@@ -364,6 +444,21 @@ def _indent(lines: list[str], level: int = 1) -> list[str]:
     return [prefix + line if line else "" for line in lines]
 
 
+def _target_has_dynamic_limits(resolved: ResolvedModuleClass) -> bool:
+    """
+    Return True when the module has at least one dynamic limits variable
+    (target_limits tuple, target_min accessible, or target_max accessible).
+    TargetLimitsMin/Max variables are present in the struct in all these cases.
+    """
+    if resolved.target is None:
+        return False
+    return bool(
+        resolved.target.has_limits_tuple
+        or resolved.target.has_limits_min
+        or resolved.target.has_limits_max
+    )
+
+
 def _build_target_range_condition(resolved: ResolvedModuleClass, temp_var: str) -> str | None:
     """
     Build the IF condition that detects whether a requested target is out of range.
@@ -380,7 +475,7 @@ def _build_target_range_condition(resolved: ResolvedModuleClass, temp_var: str) 
         checks.append(f"{temp_var} > iq_{p}TargetMax")
         checks.append(f"{temp_var} < iq_{p}TargetMin")
 
-    if resolved.target.has_limits:
+    if _target_has_dynamic_limits(resolved):
         checks.append(f"{temp_var} > iq_{p}TargetLimitsMax")
         checks.append(f"{temp_var} < iq_{p}TargetLimitsMin")
 
@@ -393,16 +488,21 @@ def _build_target_range_condition(resolved: ResolvedModuleClass, temp_var: str) 
 def _build_restrictive_min_expr(resolved: ResolvedModuleClass) -> str:
     """
     Build the ST expression for the most restrictive minimum target bound.
+
+    Uses MAX(TargetMin, TargetLimitsMin) when both a fixed min and a dynamic
+    lower limit exist.  Falls back to whichever single bound is available.
     """
     p = resolved.value.var_prefix
     if resolved.target is None:
         raise ValueError("target is None")
 
-    if resolved.target.has_min_max and resolved.target.has_limits:
+    has_dynamic = _target_has_dynamic_limits(resolved)
+
+    if resolved.target.has_min_max and has_dynamic:
         return f"MAX(iq_{p}TargetMin, iq_{p}TargetLimitsMin)"
     if resolved.target.has_min_max:
         return f"iq_{p}TargetMin"
-    if resolved.target.has_limits:
+    if has_dynamic:
         return f"iq_{p}TargetLimitsMin"
 
     raise ValueError("No restrictive min available")
@@ -411,16 +511,21 @@ def _build_restrictive_min_expr(resolved: ResolvedModuleClass) -> str:
 def _build_restrictive_max_expr(resolved: ResolvedModuleClass) -> str:
     """
     Build the ST expression for the most restrictive maximum target bound.
+
+    Uses MIN(TargetMax, TargetLimitsMax) when both a fixed max and a dynamic
+    upper limit exist.  Falls back to whichever single bound is available.
     """
     p = resolved.value.var_prefix
     if resolved.target is None:
         raise ValueError("target is None")
 
-    if resolved.target.has_min_max and resolved.target.has_limits:
+    has_dynamic = _target_has_dynamic_limits(resolved)
+
+    if resolved.target.has_min_max and has_dynamic:
         return f"MIN(iq_{p}TargetMax, iq_{p}TargetLimitsMax)"
     if resolved.target.has_min_max:
         return f"iq_{p}TargetMax"
-    if resolved.target.has_limits:
+    if has_dynamic:
         return f"iq_{p}TargetLimitsMax"
 
     raise ValueError("No restrictive max available")
@@ -435,7 +540,7 @@ def _build_limit_expr(resolved: ResolvedModuleClass, source_expr: str) -> str:
     if resolved.target is None:
         return source_expr
 
-    if resolved.target.has_min_max or resolved.target.has_limits:
+    if resolved.target.has_min_max or _target_has_dynamic_limits(resolved):
         return (
             f"LIMIT({_build_restrictive_min_expr(resolved)}, "
             f"{source_expr}, {_build_restrictive_max_expr(resolved)})"
@@ -545,6 +650,29 @@ def emit_var_internal(resolved: ResolvedModuleClass) -> list[str]:
 
     if resolved.interface_class in ("Writable", "Drivable"):
         lines.append(f" {_target_temp_var_name(resolved)}: {_target_temp_var_type(resolved)};")
+
+        # Local NewVal variables for writable limit parameters
+        if resolved.target is not None:
+            t = resolved.target
+            vp = resolved.value.var_prefix
+            pt = resolved.value.plc_type
+
+            # lrTargetLimitMinNewVal: needed when a client can change target_min
+            # (always writable when present) or when target_limits tuple is writable
+            if (bool(t.has_limits_tuple) and not bool(t.has_limits_tuple_readonly)) or \
+               bool(t.has_limits_min):
+                lines.append(f" {vp}TargetLimitMinNewVal: {pt};")
+
+            # lrTargetLimitMaxNewVal: same logic for the max side
+            if (bool(t.has_limits_tuple) and not bool(t.has_limits_tuple_readonly)) or \
+               bool(t.has_limits_max):
+                lines.append(f" {vp}TargetLimitMaxNewVal: {pt};")
+
+            # STRING/UINT locals for tuple parsing (always present when tuple is configured)
+            if bool(t.has_limits_tuple):
+                lines.append(" sLimitsMin: STRING;")
+                lines.append(" sLimitsMax: STRING;")
+                lines.append(" uiTupleSize: UINT;")
 
     lines.append(" fbBlinkPollInterval: BLINK;")
     lines.append(" fbRtrigPollInterval: R_TRIG;")
@@ -751,18 +879,12 @@ def _emit_numeric_change_target(resolved: ResolvedModuleClass) -> list[str]:
 
     range_cond = _build_target_range_condition(resolved, temp_var)
     if range_cond:
-        lines.append(f"     IF {range_cond} THEN // Target out of range")
-        lines.append("      iq_stErrorReport.sClass := 'RangeError';")
-        lines.append("      iq_stErrorReport.sDescription := 'Value must be between ';")
         min_expr = _build_restrictive_min_expr(resolved)
         max_expr = _build_restrictive_max_expr(resolved)
         to_string_func = _to_string_func_for_plc_type(resolved.value.plc_type)
-        lines.append(f"      sMin := {to_string_func}({min_expr});")
-        lines.append("      StrConcatA(pstFrom:= ADR(sMin), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
-        lines.append("      StrConcatA(pstFrom:= ADR(' and '), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
-        lines.append(f"      sMax := {to_string_func}({max_expr});")
-        lines.append("      StrConcatA(pstFrom:= ADR(sMax), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
-        lines.append("      M_ReplyWithErrorStraightAway(i_xErrorLatched:= FALSE);")
+        lines.append(f"     IF {range_cond} THEN // Target out of range")
+        lines.append('      // Return "RangeError"')
+        lines.append(f"      M_ReturnRangeError(i_RangeMin:= {to_string_func}({min_expr}), i_RangeMax:= {to_string_func}({max_expr}));")
         lines.append("     ")
         lines.append("     ELSE // Apply new target value")
         limit_expr = _build_limit_expr(resolved, temp_var)
@@ -882,6 +1004,157 @@ def _emit_string_change_target(resolved: ResolvedModuleClass) -> list[str]:
     return lines
 
 
+def _emit_change_target_limit(
+    resolved: ResolvedModuleClass,
+    which: str,  # "min" or "max"
+) -> list[str]:
+    """
+    Emit the ELSIF block that handles 'change target_min' or 'change target_max'.
+
+    Structure:
+    - Reject empty data (BadJSON)
+    - Reject non-numeric data (WrongType)
+    - Parse new value; validate against absolute target bounds (if present) AND
+      the allowed range for the limit parameter itself
+    - On range error: call M_ReturnRangeError
+    - On success: update TargetLimitsMin or TargetLimitsMax and report back
+
+    which="min" → target_min accessible / TargetLimitsMin variable
+    which="max" → target_max accessible / TargetLimitsMax variable
+    """
+    lines: list[str] = []
+    p = resolved.value.var_prefix
+    pt = resolved.value.plc_type
+    to_str = _to_string_func_for_plc_type(pt)
+    integer_required = "TRUE" if pt == "DINT" else "FALSE"
+
+    Which = which.capitalize()                          # "Min" / "Max"
+    temp_var = f"{p}TargetLimitMinNewVal" if which == "min" else f"{p}TargetLimitMaxNewVal"
+    limits_var = f"iq_{p}TargetLimitsMin" if which == "min" else f"iq_{p}TargetLimitsMax"
+    bounds_min = f"iq_{p}TargetLimits{Which}_Min"      # e.g. iq_lrTargetLimitsMin_Min
+    bounds_max = f"iq_{p}TargetLimits{Which}_Max"      # e.g. iq_lrTargetLimitsMin_Max
+
+    lines.append(f"  ELSIF i_sAccessible = 'target_{which}' THEN")
+    lines.append("   ")
+    lines.append("   IF StrIsNullOrEmptyA(pstData:= ADR(i_sData)) THEN // No data to parse")
+    lines.append('    A_ReturnErrorDataNotParsed(); // Return "BadJSON" error')
+    lines.append("   ")
+    lines.append(f"   ELSIF NOT M_CheckIfDataIsNumeric(i_sDataToParse:= i_sData, i_xMustBeInteger:= {integer_required}) THEN // Unexpected data type")
+    lines.append('    A_ReturnErrorWrongType(); // Return "WrongType" error')
+    lines.append("   ")
+    lines.append("   ELSE")
+    lines.append(f"    {temp_var} := STRING_TO_{pt}(i_sData);")
+
+    # Range condition: absolute target bounds (if present) + allowed range for the limit itself
+    checks: list[str] = []
+    if resolved.target is not None and resolved.target.has_min_max:
+        checks.append(f"{temp_var} > iq_{p}TargetMax")
+        checks.append(f"{temp_var} < iq_{p}TargetMin")
+    checks.append(f"{temp_var} > {bounds_max}")
+    checks.append(f"{temp_var} < {bounds_min}")
+    range_cond = " OR ".join(checks)
+
+    # M_ReturnRangeError bounds: tightest of absolute target bounds + allowed range
+    if resolved.target is not None and resolved.target.has_min_max:
+        err_min = f"MAX(iq_{p}TargetMin, {bounds_min})"
+        err_max = f"MIN(iq_{p}TargetMax, {bounds_max})"
+    else:
+        err_min = bounds_min
+        err_max = bounds_max
+
+    lines.append(f"    IF {range_cond} THEN // Limit out of range")
+    lines.append('     // Return "RangeError"')
+    lines.append(f"     M_ReturnRangeError(i_RangeMin:= {to_str}({err_min}), i_RangeMax:= {to_str}({err_max}));")
+    lines.append("    ")
+    lines.append("    ELSE // Apply new limit value")
+    lines.append(f"     {limits_var} := {temp_var};")
+    lines.append(f"     M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'changed', i_sAccessible := i_sAccessible, i_sDataReport:= {to_str}({limits_var}));")
+    lines.append("    END_IF")
+    lines.append("   END_IF")
+
+    return lines
+
+
+def _emit_change_target_limits(resolved: ResolvedModuleClass) -> list[str]:
+    """
+    Emit the ELSIF block that handles 'change target_limits' (SECoP v2.0 tuple).
+
+    The incoming data is a JSON tuple [min, max].  The block:
+    - Rejects empty data  → BadJSON
+    - Parses the tuple with M_ExtractTargetLimitsFromTuple
+    - Rejects tuples where size != 2  → WrongType
+    - Rejects non-numeric min or max components  → WrongType
+    - Validates both components against the allowed ranges for each limit
+    - On range error: reports a fixed description (both limits involved)
+    - On success: updates TargetLimitsMin/Max and generates a data report
+      using M_GenerateTargetLimitsDataReport
+    """
+    lines: list[str] = []
+    p = resolved.value.var_prefix
+    pt = resolved.value.plc_type
+    to_str = _to_string_func_for_plc_type(pt)
+    integer_required = "TRUE" if pt == "DINT" else "FALSE"
+
+    temp_min = f"{p}TargetLimitMinNewVal"
+    temp_max = f"{p}TargetLimitMaxNewVal"
+
+    lines.append("  ELSIF i_sAccessible = 'target_limits' THEN")
+    lines.append("   ")
+    lines.append("   IF StrIsNullOrEmptyA(pstData:= ADR(i_sData)) THEN // No data to parse")
+    lines.append('    A_ReturnErrorDataNotParsed(); // Return "BadJSON" error')
+    lines.append("   ")
+    lines.append("   ELSE")
+    lines.append("    M_ExtractTargetLimitsFromTuple(i_sDataToParse:= i_sData, q_uiSize=> uiTupleSize, q_sLimitMin=> sLimitsMin, q_sLimitMax=> sLimitsMax);")
+    lines.append("    ")
+    lines.append("    IF uiTupleSize <> 2 THEN // Unexpected data type")
+    lines.append('     A_ReturnErrorWrongType(); // Return "WrongType" error')
+    lines.append("    ")
+    lines.append(f"    ELSIF NOT M_CheckIfDataIsNumeric(i_sDataToParse:= sLimitsMin, i_xMustBeInteger:= {integer_required}) THEN // Unexpected data type")
+    lines.append('     A_ReturnErrorWrongType(); // Return "WrongType" error')
+    lines.append("    ")
+    lines.append(f"    ELSIF NOT M_CheckIfDataIsNumeric(i_sDataToParse:= sLimitsMax, i_xMustBeInteger:= {integer_required}) THEN // Unexpected data type")
+    lines.append('     A_ReturnErrorWrongType(); // Return "WrongType" error')
+    lines.append("    ")
+    lines.append("    ELSE")
+    lines.append(f"     {temp_min} := STRING_TO_{pt}(sLimitsMin);")
+    lines.append(f"     {temp_max} := STRING_TO_{pt}(sLimitsMax);")
+
+    # Build range condition: validate both components against their allowed bounds.
+    # If the target also has fixed min/max, those narrow the valid range further.
+    min_checks: list[str] = []
+    max_checks: list[str] = []
+    if resolved.target is not None and resolved.target.has_min_max:
+        min_checks.append(f"{temp_min} > iq_{p}TargetMax")
+        min_checks.append(f"{temp_min} < iq_{p}TargetMin")
+        max_checks.append(f"{temp_max} > iq_{p}TargetMax")
+        max_checks.append(f"{temp_max} < iq_{p}TargetMin")
+    min_checks.append(f"{temp_min} > iq_{p}TargetLimitsMin_Max")
+    min_checks.append(f"{temp_min} < iq_{p}TargetLimitsMin_Min")
+    max_checks.append(f"{temp_max} > iq_{p}TargetLimitsMax_Max")
+    max_checks.append(f"{temp_max} < iq_{p}TargetLimitsMax_Min")
+
+    min_part = " OR ".join(min_checks)
+    max_part = " OR ".join(max_checks)
+    # Split across two lines (min component checks / max component checks)
+    lines.append(f"     IF {min_part} OR")
+    lines.append(f"        {max_part} THEN // Limit out of range")
+    lines.append('      // Return "RangeError"')
+    lines.append("      iq_stErrorReport.sClass := 'RangeError';")
+    lines.append("      iq_stErrorReport.sDescription := 'Both min and max limits need to be within configured range';")
+    lines.append("      M_ReplyWithErrorStraightAway(i_xErrorLatched:= FALSE);")
+    lines.append("     ")
+    lines.append("     ELSE // Apply new limit values")
+    lines.append(f"      iq_{p}TargetLimitsMin := {temp_min};")
+    lines.append(f"      iq_{p}TargetLimitsMax := {temp_max};")
+    lines.append(f"      M_GenerateTargetLimitsDataReport(i_sLimitsMin:= {to_str}(iq_{p}TargetLimitsMin), i_sLimitsMax:= {to_str}(iq_{p}TargetLimitsMax)); // Generate target limits data report and store it in sBuiltDataReport")
+    lines.append("      M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'changed', i_sAccessible := i_sAccessible, i_sDataReport:= sBuiltDataReport);")
+    lines.append("     END_IF")
+    lines.append("    END_IF")
+    lines.append("   END_IF")
+
+    return lines
+
+
 def _emit_sync_change(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str]:
     lines: list[str] = []
 
@@ -917,6 +1190,29 @@ def _emit_sync_change(resolved: ResolvedModuleClass, tasklist: TaskList) -> list
 
         first_branch_started = True
 
+    t = resolved.target
+
+    # target_limits: writable dynamic limits tuple (target_limits accessible, not readonly)
+    if t is not None and t.has_limits_tuple and not t.has_limits_tuple_readonly:
+        lines.append("")
+        lines.append("  // target_limits")
+        lines.extend(_emit_change_target_limits(resolved))
+        first_branch_started = True
+
+    # target_min: always writable when present (validation rejects readonly=true)
+    if t is not None and t.has_limits_min:
+        lines.append("")
+        lines.append("  // target_min")
+        lines.extend(_emit_change_target_limit(resolved, "min"))
+        first_branch_started = True
+
+    # target_max: always writable when present (validation rejects readonly=true)
+    if t is not None and t.has_limits_max:
+        lines.append("")
+        lines.append("  // target_max")
+        lines.extend(_emit_change_target_limit(resolved, "max"))
+        first_branch_started = True
+
     if resolved.pollinterval_changeable:
         keyword = "  ELSIF" if first_branch_started else "  IF"
         lines.append("")
@@ -928,7 +1224,8 @@ def _emit_sync_change(resolved: ResolvedModuleClass, tasklist: TaskList) -> list
     readonly_names: list[str] = ["value", "status"]
     readonly_names.extend(cp.secop_name for cp in resolved.custom_parameters)
 
-    if resolved.target is not None and resolved.target.has_limits:
+    # target_limits: add to readonly block only when configured and readonly=true
+    if t is not None and t.has_limits_tuple and t.has_limits_tuple_readonly:
         readonly_names.append("target_limits")
 
     if not resolved.pollinterval_changeable:

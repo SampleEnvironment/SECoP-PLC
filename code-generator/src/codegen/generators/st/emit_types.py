@@ -260,6 +260,17 @@ def _emit_target_block(resolved_class: ResolvedModuleClass) -> list[str]:
         lines.append(f" {target_limits_min.name}: {target_limits_min.plc_type};")
         lines.append(f" {target_limits_max.name}: {target_limits_max.plc_type};")
 
+    # Bounds variables — always present alongside TargetLimitsMin/Max
+    target_limits_min_min = _find_var(vars_, f"{value_prefix}TargetLimitsMin_Min")
+    target_limits_min_max = _find_var(vars_, f"{value_prefix}TargetLimitsMin_Max")
+    target_limits_max_min = _find_var(vars_, f"{value_prefix}TargetLimitsMax_Min")
+    target_limits_max_max = _find_var(vars_, f"{value_prefix}TargetLimitsMax_Max")
+    if target_limits_min_min and target_limits_min_max and target_limits_max_min and target_limits_max_max:
+        lines.append(f" {target_limits_min_min.name}: {target_limits_min_min.plc_type};")
+        lines.append(f" {target_limits_min_max.name}: {target_limits_min_max.plc_type};")
+        lines.append(f" {target_limits_max_min.name}: {target_limits_max_min.plc_type};")
+        lines.append(f" {target_limits_max_max.name}: {target_limits_max_max.plc_type};")
+
     target_change = _find_var(vars_, f"{value_prefix}TargetChangeNewVal")
     if target_change:
         lines.append(' /// Target change - New value sent by a client through the "change" request')

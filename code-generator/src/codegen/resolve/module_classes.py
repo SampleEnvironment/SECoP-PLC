@@ -488,21 +488,25 @@ def _resolve_target(
             di_target.get("min") is not None and di_target.get("max") is not None
         )
 
-        acc_target_limits = _get_accessible(module, "target_limits")
-        if acc_target_limits:
-            di_tl = _get_datainfo(acc_target_limits)
-            if not di_tl:
-                raise ValueError("accessibles.target_limits is missing datainfo")
+        # Read the three limits accessibles once; used for existence and (tuple) readonly flag.
+        # target_min and target_max are always writable — validation (R-ACC-007) rejects
+        # readonly=true for them, so no readonly flag is needed for those two.
+        acc_tl   = _get_accessible(module, "target_limits")
+        acc_tmin = _get_accessible(module, "target_min")
+        acc_tmax = _get_accessible(module, "target_max")
 
-            has_limits = (
-                di_tl.get("min") is not None and di_tl.get("max") is not None
-            )
-        else:
-            # conceptually applicable for numeric targets, but not configured
-            has_limits = False
+        has_limits_tuple = acc_tl   is not None
+        has_limits_min   = acc_tmin is not None
+        has_limits_max   = acc_tmax is not None
+
+        # target_limits can be readonly; absent defaults to True (no change possible)
+        has_limits_tuple_readonly = bool(acc_tl.get("readonly", False)) if acc_tl else True
     else:
         has_min_max = None
-        has_limits = None
+        has_limits_tuple = None
+        has_limits_min   = None
+        has_limits_max   = None
+        has_limits_tuple_readonly = None
 
     if _is_drivable(interface_class) and value.is_numeric:
         xplc = module.get("x-plc") or {}
@@ -516,7 +520,10 @@ def _resolve_target(
 
     return ResolvedTarget(
         has_min_max=has_min_max,
-        has_limits=has_limits,
+        has_limits_tuple=has_limits_tuple,
+        has_limits_min=has_limits_min,
+        has_limits_max=has_limits_max,
+        has_limits_tuple_readonly=has_limits_tuple_readonly,
         has_drive_tolerance=has_drive_tolerance,
     )
 
@@ -838,7 +845,7 @@ def _build_module_variables(
                 )
             )
 
-        if target.has_limits:
+        if target.has_limits_tuple or target.has_limits_min or target.has_limits_max:
             vars_out.append(
                 ResolvedModuleVariable(
                     name=make_var_name(value.var_prefix, "TargetLimitsMin"),
@@ -849,6 +856,34 @@ def _build_module_variables(
             vars_out.append(
                 ResolvedModuleVariable(
                     name=make_var_name(value.var_prefix, "TargetLimitsMax"),
+                    plc_type=value.plc_type,
+                    category="target",
+                )
+            )
+            vars_out.append(
+                ResolvedModuleVariable(
+                    name=make_var_name(value.var_prefix, "TargetLimitsMin_Min"),
+                    plc_type=value.plc_type,
+                    category="target",
+                )
+            )
+            vars_out.append(
+                ResolvedModuleVariable(
+                    name=make_var_name(value.var_prefix, "TargetLimitsMin_Max"),
+                    plc_type=value.plc_type,
+                    category="target",
+                )
+            )
+            vars_out.append(
+                ResolvedModuleVariable(
+                    name=make_var_name(value.var_prefix, "TargetLimitsMax_Min"),
+                    plc_type=value.plc_type,
+                    category="target",
+                )
+            )
+            vars_out.append(
+                ResolvedModuleVariable(
+                    name=make_var_name(value.var_prefix, "TargetLimitsMax_Max"),
                     plc_type=value.plc_type,
                     category="target",
                 )

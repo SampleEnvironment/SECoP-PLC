@@ -150,19 +150,27 @@
             "type": "double",
             "unit": "T",
             "min": -15.0,
-            "max": 15.0
+            "max": 14.0
           },
           "readonly": false
         },
-        "target_limits": {
-          "description": "target range restriction",
+        "target_min": {
+          "description": "target range restriction - min allowed value",
           "datainfo": {
             "type": "double",
-            "unit": "%",
-            "min": -11,
-            "max": 11
+            "min": -12.0,
+            "max": -10.0
           },
-          "readonly": true
+          "readonly": false
+        },
+        "target_max": {
+          "description": "target range restriction - max allowed value",
+          "datainfo": {
+            "type": "double",
+            "min": 10.0,
+            "max": 12.0
+          },
+          "readonly": false
         },
         "pollinterval": {
           "description": "default poll interval",
@@ -256,6 +264,25 @@
             "unit": "K",
             "min": 10.0,
             "max": 300.0
+          },
+          "readonly": false
+        },
+        "target_limits": {
+          "description": "target range restriction",
+          "datainfo": {
+            "type": "tuple",
+            "members": [
+              {
+                "type": "double",
+                "min": 10.0,
+                "max": 300.0
+              },
+              {
+                "type": "double",
+                "min": 10.0,
+                "max": 300.0
+              }
+            ]
           },
           "readonly": false
         },

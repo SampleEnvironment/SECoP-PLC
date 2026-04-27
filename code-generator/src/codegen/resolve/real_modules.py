@@ -156,7 +156,10 @@ class ResolvedRealModule:
     value_has_out_of_range: bool | None
 
     target_has_min_max: bool | None
-    target_has_limits: bool | None
+    target_has_limits_tuple: bool | None
+    target_has_limits_min: bool | None
+    target_has_limits_max: bool | None
+    target_has_limits_tuple_readonly: bool | None
     target_has_drive_tolerance: bool | None
 
     value_min: float | int | None
@@ -166,8 +169,17 @@ class ResolvedRealModule:
 
     target_min: float | int | None
     target_max: float | int | None
-    target_limits_min: float | int | None
-    target_limits_max: float | int | None
+
+    # Bounds for the 6 TargetLimitsMin/Max init variables.
+    # Resolution logic (applied at resolve time, with fallback to target.min/max):
+    #   has_limits_min/max     -> derived from target_min / target_max accessibles
+    #   has_limits_tuple       -> derived from target_limits.datainfo.members[0/1]
+    # Both None when neither form applies (non-numeric target or no limits configured).
+    target_limits_min_min: float | int | None   # lower bound of the min-limit parameter
+    target_limits_min_max: float | int | None   # upper bound of the min-limit parameter
+    target_limits_max_min: float | int | None   # lower bound of the max-limit parameter
+    target_limits_max_max: float | int | None   # upper bound of the max-limit parameter
+
     target_drive_tolerance: float | int | None
 
     pollinterval_min: float | None
@@ -329,6 +341,71 @@ def _build_structure_report_json(cfg: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_limits_bounds(
+    module_cfg: dict[str, Any],
+    target_min: float | int | None,
+    target_max: float | int | None,
+    has_limits_tuple: bool,
+    has_limits_min: bool,
+    has_limits_max: bool,
+) -> tuple[
+    float | int | None,   # target_limits_min_min
+    float | int | None,   # target_limits_min_max
+    float | int | None,   # target_limits_max_min
+    float | int | None,   # target_limits_max_max
+]:
+    """
+    Resolve the 4 bounds needed to initialise the 6 TargetLimitsMin/Max variables.
+
+    For has_limits_min / has_limits_max (individual target_min / target_max accessibles):
+        min_min = target_min.datainfo.min  ?? target.datainfo.min
+        min_max = target_min.datainfo.max  ?? target.datainfo.max
+        max_min = target_max.datainfo.min  ?? target.datainfo.min
+        max_max = target_max.datainfo.max  ?? target.datainfo.max
+
+    For has_limits_tuple (target_limits tuple accessible):
+        min_min = members[0].min  ?? target.datainfo.min
+        min_max = members[0].max  ?? target.datainfo.max
+        max_min = members[1].min  ?? target.datainfo.min
+        max_max = members[1].max  ?? target.datainfo.max
+
+    Returns (None, None, None, None) when neither form applies.
+    """
+    def _fb(val: Any, fallback: Any) -> Any:
+        """Return val if not None, otherwise fallback."""
+        return val if val is not None else fallback
+
+    if has_limits_min or has_limits_max:
+        acc_tmin = _get_accessible(module_cfg, "target_min")
+        di_tmin = (_get_datainfo(acc_tmin) or {}) if acc_tmin else {}
+
+        acc_tmax = _get_accessible(module_cfg, "target_max")
+        di_tmax = (_get_datainfo(acc_tmax) or {}) if acc_tmax else {}
+
+        return (
+            _fb(di_tmin.get("min"), target_min),
+            _fb(di_tmin.get("max"), target_max),
+            _fb(di_tmax.get("min"), target_min),
+            _fb(di_tmax.get("max"), target_max),
+        )
+
+    if has_limits_tuple:
+        acc_tl = _get_accessible(module_cfg, "target_limits")
+        di_tl = (_get_datainfo(acc_tl) or {}) if acc_tl else {}
+        members = di_tl.get("members") or []
+        m0: dict[str, Any] = members[0] if len(members) > 0 else {}
+        m1: dict[str, Any] = members[1] if len(members) > 1 else {}
+
+        return (
+            _fb(m0.get("min"), target_min),
+            _fb(m0.get("max"), target_max),
+            _fb(m1.get("min"), target_min),
+            _fb(m1.get("max"), target_max),
+        )
+
+    return (None, None, None, None)
+
+
 def _resolve_real_custom_parameter_plc_map(
     module_cfg: dict[str, Any],
     resolved_custom_parameters: list[ResolvedCustomParameter],
@@ -386,16 +463,34 @@ def _resolve_one_real_module(
     target_min = di_target.get("min")
     target_max = di_target.get("max")
 
-    acc_target_limits = _get_accessible(module_cfg, "target_limits")
-    di_target_limits = _get_datainfo(acc_target_limits) or {}
-    target_limits_min = di_target_limits.get("min")
-    target_limits_max = di_target_limits.get("max")
-
     acc_poll = _get_accessible(module_cfg, "pollinterval")
     di_poll = _get_datainfo(acc_poll) or {}
     pollinterval_min = di_poll.get("min")
     pollinterval_max = di_poll.get("max")
     pollinterval_readonly = bool(acc_poll.get("readonly", False)) if acc_poll else True
+
+    # ------------------------------------------------------------
+    # Resolve 4 bounds for TargetLimitsMin/Max initialisation.
+    # These are needed by SecopInit regardless of whether limits come from
+    # the target_limits tuple or the individual target_min/target_max accessibles.
+    # ------------------------------------------------------------
+    _has_limits_tuple = bool(resolved_class.target.has_limits_tuple) if resolved_class.target else False
+    _has_limits_min   = bool(resolved_class.target.has_limits_min)   if resolved_class.target else False
+    _has_limits_max   = bool(resolved_class.target.has_limits_max)   if resolved_class.target else False
+
+    (
+        target_limits_min_min,
+        target_limits_min_max,
+        target_limits_max_min,
+        target_limits_max_max,
+    ) = _resolve_limits_bounds(
+        module_cfg=module_cfg,
+        target_min=target_min,
+        target_max=target_max,
+        has_limits_tuple=_has_limits_tuple,
+        has_limits_min=_has_limits_min,
+        has_limits_max=_has_limits_max,
+    )
 
     # ------------------------------------------------------------
     # x-plc.value
@@ -465,7 +560,10 @@ def _resolve_one_real_module(
         value_has_out_of_range=resolved_class.value.has_out_of_range,
 
         target_has_min_max=resolved_class.target.has_min_max if resolved_class.target else None,
-        target_has_limits=resolved_class.target.has_limits if resolved_class.target else None,
+        target_has_limits_tuple=resolved_class.target.has_limits_tuple if resolved_class.target else None,
+        target_has_limits_min=resolved_class.target.has_limits_min if resolved_class.target else None,
+        target_has_limits_max=resolved_class.target.has_limits_max if resolved_class.target else None,
+        target_has_limits_tuple_readonly=resolved_class.target.has_limits_tuple_readonly if resolved_class.target else None,
         target_has_drive_tolerance=resolved_class.target.has_drive_tolerance if resolved_class.target else None,
 
         value_min=value_min,
@@ -475,8 +573,10 @@ def _resolve_one_real_module(
 
         target_min=target_min,
         target_max=target_max,
-        target_limits_min=target_limits_min,
-        target_limits_max=target_limits_max,
+        target_limits_min_min=target_limits_min_min,
+        target_limits_min_max=target_limits_min_max,
+        target_limits_max_min=target_limits_max_min,
+        target_limits_max_max=target_limits_max_max,
         target_drive_tolerance=resolved_x_target.reach_abs_tolerance,
 
         pollinterval_min=pollinterval_min,

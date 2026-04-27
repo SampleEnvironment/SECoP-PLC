@@ -244,9 +244,17 @@ def _emit_module_init(
         lines.append(f"{pfx}.{module.value_var_prefix}ValueOutOfRangeL := {module.value_out_of_range_l};")
         lines.append(f"{pfx}.{module.value_var_prefix}ValueOutOfRangeH := {module.value_out_of_range_h};")
 
-    if module.target_has_limits:
-        lines.append(f"{pfx}.{module.value_var_prefix}TargetLimitsMin := {module.target_limits_min};")
-        lines.append(f"{pfx}.{module.value_var_prefix}TargetLimitsMax := {module.target_limits_max};")
+    if module.target_has_limits_tuple or module.target_has_limits_min or module.target_has_limits_max:
+        vp = module.value_var_prefix
+        # lrTargetLimitsMin / lrTargetLimitsMax: current lower/upper limit values
+        # lrTargetLimitsMin_Min/Max: allowed range for the min-limit parameter
+        # lrTargetLimitsMax_Min/Max: allowed range for the max-limit parameter
+        lines.append(f"{pfx}.{vp}TargetLimitsMin     := {module.target_limits_min_min};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMax     := {module.target_limits_max_max};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMin_Min := {module.target_limits_min_min};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMin_Max := {module.target_limits_min_max};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMax_Min := {module.target_limits_max_min};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMax_Max := {module.target_limits_max_max};")
 
     lines.append(f"{pfx}.stPollInterval.lrValue := 5;")
     lines.append(f"{pfx}.stPollInterval.lrMin := {module.pollinterval_min};")

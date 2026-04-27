@@ -19,8 +19,8 @@ This file intentionally distinguishes between:
 1) structural applicability at module-class level
 2) concrete configured values at real-module level
 
-For structural flags such as has_min_max, has_limits or
-has_drive_tolerance, we use a three-state meaning:
+For structural flags such as has_min_max, has_limits_tuple,
+has_limits_min, has_limits_max or has_drive_tolerance, we use a three-state meaning:
 
 - True:
     the concept applies to this module class and is configured
@@ -188,10 +188,28 @@ class ResolvedTarget:
         - False -> target min/max applies but is not configured
         - None  -> target min/max does not apply conceptually
 
-    has_limits:
-        - True  -> target_limits applies and is configured
-        - False -> target_limits applies but is not configured
-        - None  -> target_limits does not apply conceptually
+    has_limits_tuple:
+        - True  -> target_limits (tuple, SECoP v2.0) is configured
+        - False -> concept applies but not configured
+        - None  -> does not apply conceptually (non-numeric target)
+
+    has_limits_min:
+        - True  -> target_min accessible is configured
+        - False -> concept applies but not configured
+        - None  -> does not apply conceptually (non-numeric target)
+
+    has_limits_max:
+        - True  -> target_max accessible is configured
+        - False -> concept applies but not configured
+        - None  -> does not apply conceptually (non-numeric target)
+
+    has_limits_tuple_readonly:
+        - True  -> target_limits accessible is readonly (or absent, safe default)
+        - False -> target_limits accessible is writable
+        - None  -> does not apply conceptually (non-numeric target)
+
+    Note: target_min and target_max are always writable (validation rejects
+    readonly=true for them), so no readonly flag is needed for those.
 
     has_drive_tolerance:
         - True  -> drive tolerance applies and is configured
@@ -205,7 +223,10 @@ class ResolvedTarget:
       ResolvedModuleClass
     """
     has_min_max: Optional[bool]
-    has_limits: Optional[bool]
+    has_limits_tuple: Optional[bool]
+    has_limits_min: Optional[bool]
+    has_limits_max: Optional[bool]
+    has_limits_tuple_readonly: Optional[bool]
     has_drive_tolerance: Optional[bool]
 
 
