@@ -18,6 +18,7 @@ For detailed documentation, examples and guides, please refer to the Wiki.
 | | |
 |---|---|
 | **Language** | Python 3.14 |
+| **Docker** | Supported |
 | **Dependencies** | [`pydantic >= 2.0`](https://github.com/SampleEnvironment/SECoP-PLC/blob/master/code-generator/requirements.txt) |
 
 ---
