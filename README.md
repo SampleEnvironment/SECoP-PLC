@@ -22,7 +22,7 @@ For detailed documentation, examples and guides, please refer to the Wiki.
 
 ---
 
-## SECoP Protocol v1.0 compliance
+## SECoP Protocol v2.0 compliance
 
 The library implements the following features of the [SECoP specification](https://sampleenvironment.github.io/secop-site/):
 
@@ -33,7 +33,7 @@ The library implements the following features of the [SECoP specification](https
 ### Descriptive data
 - All mandatory [SEC node properties](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#sec-node-description), plus optional `firmware` and `implementor`
 - All mandatory [module properties](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#module-description), plus optional `implementor` and `implementation`
-- All mandatory [parameter properties](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#module-description), plus optional `target_limits`
+- All mandatory [parameter properties](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#module-description), plus postfixes `target_min`, `target_max` and `target_limits`
 
 ### Data types
 All [data types](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#module-description) are supported, except: `scaled` (not required, as scaling can be done on the PLC side), `blob`, `matrix`
