@@ -68,6 +68,8 @@ from codegen.rules.plc_rules import (
     rule_xplc_status_comm_error_fields_configured,
     rule_xplc_status_comm_error_fields_coherent,
     rule_xplc_status_disabled_fields_coherent,
+    rule_xplc_target_readonly_limit_exprs,
+    rule_xplc_target_limit_expr_readonly_required,
     rule_xplc_target_change_possible_expr_configured,
     rule_xplc_target_reach_fields,
     rule_xplc_value_mapping_by_type,
@@ -127,6 +129,8 @@ def validate_config(cfg: SecNodeConfig) -> list[Finding]:
     findings.extend(rule_xplc_status_comm_error_fields_configured(cfg))          # R-PLC-021B
     findings.extend(rule_xplc_status_comm_error_fields_coherent(cfg))            # R-PLC-021C
     findings.extend(rule_xplc_status_disabled_fields_coherent(cfg))              # R-PLC-022/023
+    findings.extend(rule_xplc_target_readonly_limit_exprs(cfg))                  # R-PLC-027
+    findings.extend(rule_xplc_target_limit_expr_readonly_required(cfg))          # R-PLC-028
     findings.extend(rule_xplc_target_change_possible_expr_configured(cfg))       # R-PLC-026
     findings.extend(rule_xplc_target_reach_fields(cfg))                          # R-PLC-024/025
     findings.extend(rule_xplc_value_mapping_by_type(cfg))                        # R-PLC-030/031

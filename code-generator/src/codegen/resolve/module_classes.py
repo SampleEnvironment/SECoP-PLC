@@ -488,9 +488,7 @@ def _resolve_target(
             di_target.get("min") is not None and di_target.get("max") is not None
         )
 
-        # Read the three limits accessibles once; used for existence and (tuple) readonly flag.
-        # target_min and target_max are always writable — validation (R-ACC-007) rejects
-        # readonly=true for them, so no readonly flag is needed for those two.
+        # Read the three limits accessibles once; used for existence and readonly flags.
         acc_tl   = _get_accessible(module, "target_limits")
         acc_tmin = _get_accessible(module, "target_min")
         acc_tmax = _get_accessible(module, "target_max")
@@ -499,20 +497,27 @@ def _resolve_target(
         has_limits_min   = acc_tmin is not None
         has_limits_max   = acc_tmax is not None
 
-        # target_limits can be readonly; absent defaults to True (no change possible)
-        has_limits_tuple_readonly = bool(acc_tl.get("readonly", False)) if acc_tl else True
+        # Readonly flags: absent accessibles default to True (no SECoP client change possible).
+        # readonly=true  -> PLC-driven limit (mapped in SecopMapFromPlc from a PLC process var)
+        # readonly=false -> SECoP client can change the limit (change block emitted in FB)
+        has_limits_tuple_readonly = bool(acc_tl.get("readonly", False))   if acc_tl   else True
+        has_limits_min_readonly   = bool(acc_tmin.get("readonly", False))  if acc_tmin  else True
+        has_limits_max_readonly   = bool(acc_tmax.get("readonly", False))  if acc_tmax  else True
     else:
         has_min_max = None
         has_limits_tuple = None
         has_limits_min   = None
         has_limits_max   = None
         has_limits_tuple_readonly = None
+        has_limits_min_readonly   = None
+        has_limits_max_readonly   = None
 
     if _is_drivable(interface_class) and value.is_numeric:
         xplc = module.get("x-plc") or {}
         xplc_target = xplc.get("target") if isinstance(xplc, dict) else None
         if isinstance(xplc_target, dict):
-            has_drive_tolerance = xplc_target.get("reach_abs_tolerance") is not None
+            expr = xplc_target.get("reach_abs_tolerance_expr")
+            has_drive_tolerance = isinstance(expr, str) and bool(expr.strip())
         else:
             has_drive_tolerance = False
     else:
@@ -524,6 +529,8 @@ def _resolve_target(
         has_limits_min=has_limits_min,
         has_limits_max=has_limits_max,
         has_limits_tuple_readonly=has_limits_tuple_readonly,
+        has_limits_min_readonly=has_limits_min_readonly,
+        has_limits_max_readonly=has_limits_max_readonly,
         has_drive_tolerance=has_drive_tolerance,
     )
 
@@ -898,7 +905,7 @@ def _build_module_variables(
                 )
             )
 
-        if target.has_drive_tolerance:
+        if target.has_drive_tolerance is not None:
             vars_out.append(
                 ResolvedModuleVariable(
                     name=make_var_name(value.var_prefix, "TargetDriveTolerance"),

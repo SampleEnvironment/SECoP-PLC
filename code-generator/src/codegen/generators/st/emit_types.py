@@ -40,6 +40,7 @@ from codegen.resolve.types import (
     ResolvedModuleVariable,
 )
 from codegen.tasklist import TaskList
+from codegen.generators.st.st_utils import sanitize_enum_member_name
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +90,7 @@ def _enum_type_filename(enum_type_name: str) -> str:
     return f"{enum_type_name}.st"
 
 
+
 # ---------------------------------------------------------------------------
 # Enum DUT emitters
 # ---------------------------------------------------------------------------
@@ -119,7 +121,8 @@ def _emit_enum_type(type_name: str, members: dict[str, int]) -> str:
     items = list(members.items())
     for idx, (member_name, member_value) in enumerate(items):
         comma = "," if idx < len(items) - 1 else ""
-        lines.append(f" {member_name} := {member_value}{comma}")
+        st_name = sanitize_enum_member_name(member_name)
+        lines.append(f" {st_name} := {member_value}{comma}")
 
     lines.append(");")
     lines.append("END_TYPE")

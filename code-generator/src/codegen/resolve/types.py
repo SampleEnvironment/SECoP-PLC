@@ -208,8 +208,15 @@ class ResolvedTarget:
         - False -> target_limits accessible is writable
         - None  -> does not apply conceptually (non-numeric target)
 
-    Note: target_min and target_max are always writable (validation rejects
-    readonly=true for them), so no readonly flag is needed for those.
+    has_limits_min_readonly:
+        - True  -> target_min accessible is readonly (PLC-driven) or absent
+        - False -> target_min accessible is writable (SECoP client can change)
+        - None  -> does not apply conceptually (non-numeric target)
+
+    has_limits_max_readonly:
+        - True  -> target_max accessible is readonly (PLC-driven) or absent
+        - False -> target_max accessible is writable (SECoP client can change)
+        - None  -> does not apply conceptually (non-numeric target)
 
     has_drive_tolerance:
         - True  -> drive tolerance applies and is configured
@@ -227,6 +234,8 @@ class ResolvedTarget:
     has_limits_min: Optional[bool]
     has_limits_max: Optional[bool]
     has_limits_tuple_readonly: Optional[bool]
+    has_limits_min_readonly: Optional[bool]
+    has_limits_max_readonly: Optional[bool]
     has_drive_tolerance: Optional[bool]
 
 

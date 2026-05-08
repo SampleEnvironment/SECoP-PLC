@@ -534,6 +534,192 @@ def rule_xplc_status_disabled_fields_coherent(cfg: SecNodeConfig) -> list[Findin
 # Target-related rules
 # ---------------------------------------------------------------------------
 
+def rule_xplc_target_readonly_limit_exprs(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-PLC-027:
+    When a limit accessible is configured with readonly=true, the corresponding
+    PLC expression (x-plc.target.limit_min_expr / limit_max_expr) should be
+    configured so that SecopMapFromPlc can assign the live limit value from a
+    PLC process variable each CPU cycle.
+
+    Applies to:
+    - target_min  with readonly=true  -> limit_min_expr expected
+    - target_max  with readonly=true  -> limit_max_expr expected
+    - target_limits with readonly=true -> both limit_min_expr and limit_max_expr expected
+    """
+    findings: list[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        accs = mod.accessibles or {}
+
+        acc_tmin = accs.get("target_min")
+        acc_tmax = accs.get("target_max")
+        acc_tl   = accs.get("target_limits")
+
+        if not (acc_tmin or acc_tmax or acc_tl):
+            continue
+
+        xplc = mod.x_plc
+        t_cfg = xplc.target if xplc else None
+
+        # target_min readonly -> limit_min_expr expected
+        if acc_tmin is not None and bool(acc_tmin.readonly):
+            if t_cfg is None or _is_empty(t_cfg.limit_min_expr):
+                findings.append(
+                    Finding(
+                        rule_id="R-PLC-027",
+                        severity=Severity.WARNING,
+                        path=f"$.modules.{mod_name}.x-plc.target.limit_min_expr",
+                        message=(
+                            "target_min has readonly=true but "
+                            "x-plc.target.limit_min_expr is not configured. "
+                            f"{IMPLEMENTATION_WARNING_SUFFIX}"
+                        ),
+                    )
+                )
+
+        # target_max readonly -> limit_max_expr expected
+        if acc_tmax is not None and bool(acc_tmax.readonly):
+            if t_cfg is None or _is_empty(t_cfg.limit_max_expr):
+                findings.append(
+                    Finding(
+                        rule_id="R-PLC-027",
+                        severity=Severity.WARNING,
+                        path=f"$.modules.{mod_name}.x-plc.target.limit_max_expr",
+                        message=(
+                            "target_max has readonly=true but "
+                            "x-plc.target.limit_max_expr is not configured. "
+                            f"{IMPLEMENTATION_WARNING_SUFFIX}"
+                        ),
+                    )
+                )
+
+        # target_limits readonly -> both limit_min_expr and limit_max_expr expected
+        if acc_tl is not None and bool(acc_tl.readonly):
+            if t_cfg is None or _is_empty(t_cfg.limit_min_expr):
+                findings.append(
+                    Finding(
+                        rule_id="R-PLC-027",
+                        severity=Severity.WARNING,
+                        path=f"$.modules.{mod_name}.x-plc.target.limit_min_expr",
+                        message=(
+                            "target_limits has readonly=true but "
+                            "x-plc.target.limit_min_expr is not configured. "
+                            f"{IMPLEMENTATION_WARNING_SUFFIX}"
+                        ),
+                    )
+                )
+            if t_cfg is None or _is_empty(t_cfg.limit_max_expr):
+                findings.append(
+                    Finding(
+                        rule_id="R-PLC-027",
+                        severity=Severity.WARNING,
+                        path=f"$.modules.{mod_name}.x-plc.target.limit_max_expr",
+                        message=(
+                            "target_limits has readonly=true but "
+                            "x-plc.target.limit_max_expr is not configured. "
+                            f"{IMPLEMENTATION_WARNING_SUFFIX}"
+                        ),
+                    )
+                )
+
+    return findings
+
+
+def rule_xplc_target_limit_expr_readonly_required(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-PLC-028:
+    x-plc.target.limit_min/max_expr must only be configured when the corresponding
+    limit accessible is readonly=true (PLC-driven limits).
+
+    If the limit accessible has readonly=false the SECoP client controls the limit
+    value via the change block generated in the FB.  A PLC expression would conflict
+    with that write path and must not be configured.
+
+    Applies to:
+    - target_min  readonly=false + limit_min_expr  configured -> ERROR
+    - target_max  readonly=false + limit_max_expr  configured -> ERROR
+    - target_limits readonly=false + limit_min_expr configured -> ERROR
+    - target_limits readonly=false + limit_max_expr configured -> ERROR
+    """
+    findings: list[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        accs = mod.accessibles or {}
+        xplc = mod.x_plc
+        t_cfg = xplc.target if xplc else None
+
+        if t_cfg is None:
+            continue
+
+        acc_tmin = accs.get("target_min")
+        acc_tmax = accs.get("target_max")
+        acc_tl   = accs.get("target_limits")
+
+        # target_min is client-writable but limit_min_expr is configured
+        if acc_tmin is not None and not bool(acc_tmin.readonly):
+            if not _is_empty(t_cfg.limit_min_expr):
+                findings.append(
+                    Finding(
+                        rule_id="R-PLC-028",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.x-plc.target.limit_min_expr",
+                        message=(
+                            "x-plc.target.limit_min_expr is configured but "
+                            "target_min has readonly=false. "
+                            "limit_min_expr is only valid for PLC-driven readonly limits."
+                        ),
+                    )
+                )
+
+        # target_max is client-writable but limit_max_expr is configured
+        if acc_tmax is not None and not bool(acc_tmax.readonly):
+            if not _is_empty(t_cfg.limit_max_expr):
+                findings.append(
+                    Finding(
+                        rule_id="R-PLC-028",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.x-plc.target.limit_max_expr",
+                        message=(
+                            "x-plc.target.limit_max_expr is configured but "
+                            "target_max has readonly=false. "
+                            "limit_max_expr is only valid for PLC-driven readonly limits."
+                        ),
+                    )
+                )
+
+        # target_limits is client-writable but limit_min/max_expr configured
+        if acc_tl is not None and not bool(acc_tl.readonly):
+            if not _is_empty(t_cfg.limit_min_expr):
+                findings.append(
+                    Finding(
+                        rule_id="R-PLC-028",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.x-plc.target.limit_min_expr",
+                        message=(
+                            "x-plc.target.limit_min_expr is configured but "
+                            "target_limits has readonly=false. "
+                            "limit_min_expr is only valid for PLC-driven readonly limits."
+                        ),
+                    )
+                )
+            if not _is_empty(t_cfg.limit_max_expr):
+                findings.append(
+                    Finding(
+                        rule_id="R-PLC-028",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.x-plc.target.limit_max_expr",
+                        message=(
+                            "x-plc.target.limit_max_expr is configured but "
+                            "target_limits has readonly=false. "
+                            "limit_max_expr is only valid for PLC-driven readonly limits."
+                        ),
+                    )
+                )
+
+    return findings
+
+
 def rule_xplc_target_change_possible_expr_configured(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-026:
@@ -564,9 +750,9 @@ def rule_xplc_target_reach_fields(cfg: SecNodeConfig) -> list[Finding]:
     R-PLC-024 / R-PLC-025:
 
     - ERROR if reach_* fields are present and module is not Drivable
-    - ERROR if reach_abs_tolerance is present for non-numeric targets
+    - ERROR if reach_abs_tolerance_expr is present for non-numeric targets
     - WARNING if reach_timeout_s is missing for Drivable modules
-    - WARNING if reach_abs_tolerance is missing for Drivable numeric targets
+    - WARNING if reach_abs_tolerance_expr is missing for Drivable numeric targets
     """
     findings: list[Finding] = []
 
@@ -588,24 +774,24 @@ def rule_xplc_target_reach_fields(cfg: SecNodeConfig) -> list[Finding]:
                 )
             )
 
-        if xplc.target.reach_abs_tolerance is not None and (not is_drv):
+        if not _is_empty(xplc.target.reach_abs_tolerance_expr) and (not is_drv):
             findings.append(
                 Finding(
                     rule_id="R-PLC-024",
                     severity=Severity.ERROR,
-                    path=f"$.modules.{mod_name}.x-plc.target.reach_abs_tolerance",
-                    message="x-plc.target.reach_abs_tolerance is only allowed for Drivable modules.",
+                    path=f"$.modules.{mod_name}.x-plc.target.reach_abs_tolerance_expr",
+                    message="x-plc.target.reach_abs_tolerance_expr is only allowed for Drivable modules.",
                 )
             )
 
-        if xplc.target.reach_abs_tolerance is not None and not _is_numeric_type(target_type):
+        if not _is_empty(xplc.target.reach_abs_tolerance_expr) and not _is_numeric_type(target_type):
             findings.append(
                 Finding(
                     rule_id="R-PLC-024",
                     severity=Severity.ERROR,
-                    path=f"$.modules.{mod_name}.x-plc.target.reach_abs_tolerance",
+                    path=f"$.modules.{mod_name}.x-plc.target.reach_abs_tolerance_expr",
                     message=(
-                        "x-plc.target.reach_abs_tolerance is only allowed for "
+                        "x-plc.target.reach_abs_tolerance_expr is only allowed for "
                         "Drivable modules with numeric target type ('double' or 'int')."
                     ),
                 )
@@ -624,13 +810,13 @@ def rule_xplc_target_reach_fields(cfg: SecNodeConfig) -> list[Finding]:
                 )
             )
 
-        if _is_numeric_type(target_type) and xplc.target.reach_abs_tolerance is None:
+        if _is_numeric_type(target_type) and _is_empty(xplc.target.reach_abs_tolerance_expr):
             findings.append(
                 Finding(
                     rule_id="R-PLC-025",
                     severity=Severity.WARNING,
-                    path=f"$.modules.{mod_name}.x-plc.target.reach_abs_tolerance",
-                    message=f"The field x-plc.target.reach_abs_tolerance is not configured. {IMPLEMENTATION_WARNING_SUFFIX}",
+                    path=f"$.modules.{mod_name}.x-plc.target.reach_abs_tolerance_expr",
+                    message=f"The field x-plc.target.reach_abs_tolerance_expr is not configured. {IMPLEMENTATION_WARNING_SUFFIX}",
                 )
             )
 

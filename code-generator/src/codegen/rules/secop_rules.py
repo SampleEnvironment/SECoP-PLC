@@ -836,19 +836,19 @@ def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> list[Finding
     Policy:
     - commands:      readonly=true is forbidden (commands are always writable)
     - target:        must have readonly=false
-    - pollinterval:  must have readonly=false
-    - target_min:    must have readonly=false — use target_limits with readonly=true
-                     if a non-changeable range restriction is needed
-    - target_max:    same as target_min
     - target_limits: readonly=true or readonly=false are both accepted
+                     (readonly=true -> PLC-driven limits, readonly=false -> SECoP client can change)
+    - target_min:    readonly=true or readonly=false are both accepted (same as target_limits)
+    - target_max:    readonly=true or readonly=false are both accepted (same as target_limits)
+    - pollinterval:  readonly=true or readonly=false are both accepted
     - all others:    must have readonly=true
     """
     findings: list[Finding] = []
 
-    # These must always be writable; readonly=true is an error.
-    must_be_writable = {"target", "pollinterval", "target_min", "target_max"}
-    # This one accepts either value; no readonly constraint.
-    readonly_flexible = {"target_limits"}
+    # Only these must always be writable; readonly=true is an error for them.
+    must_be_writable = {"target"}
+    # These accept either readonly=true or readonly=false; no readonly constraint.
+    readonly_flexible = {"target_limits", "target_min", "target_max", "pollinterval"}
 
     for mod_name, mod in cfg.modules.items():
         for acc_name, acc in (mod.accessibles or {}).items():
@@ -870,7 +870,7 @@ def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> list[Finding
                     )
                 continue
 
-            # target_limits: both readonly=true and readonly=false are valid.
+            # Flexible accessibles: both readonly=true and readonly=false are valid.
             if acc_name in readonly_flexible:
                 continue
 
@@ -886,38 +886,24 @@ def rule_standard_accessible_readonly_policy(cfg: SecNodeConfig) -> list[Finding
                             path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
                             message=(
                                 "Current PLC SEC node implements readonly=false "
-                                "only for: target, pollinterval, target_min, target_max, "
-                                "and target_limits (which also accepts readonly=true)."
+                                "only for: target, and target_limits / target_min / "
+                                "target_max / pollinterval (which also accept readonly=true)."
                             ),
                         )
                     )
                 else:
                     # Must be writable but readonly=true was set.
-                    if acc_name in ("target_min", "target_max"):
-                        findings.append(
-                            Finding(
-                                rule_id="R-ACC-007",
-                                severity=Severity.ERROR,
-                                path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
-                                message=(
-                                    f"Accessible '{acc_name}' must have readonly=false. "
-                                    "If you need a non-changeable target range restriction, "
-                                    "use 'target_limits' with readonly=true instead."
-                                ),
-                            )
+                    findings.append(
+                        Finding(
+                            rule_id="R-ACC-007",
+                            severity=Severity.ERROR,
+                            path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
+                            message=(
+                                f"Accessible '{acc_name}' must have readonly=false "
+                                "in this PLC SEC node configuration."
+                            ),
                         )
-                    else:
-                        findings.append(
-                            Finding(
-                                rule_id="R-ACC-007",
-                                severity=Severity.ERROR,
-                                path=f"$.modules.{mod_name}.accessibles.{acc_name}.readonly",
-                                message=(
-                                    f"Accessible '{acc_name}' must have readonly=false "
-                                    "in this PLC SEC node configuration."
-                                ),
-                            )
-                        )
+                    )
 
     return findings
 

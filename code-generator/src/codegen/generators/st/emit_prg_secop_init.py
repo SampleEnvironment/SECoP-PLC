@@ -69,12 +69,35 @@ def _format_st_scalar(value: float | int | str) -> str:
 
     Notes:
     - strings are single-quoted
-    - numbers are emitted as-is
+    - floats with no fractional part are emitted as integers (e.g. 10000.0 -> 10000)
+      so that the literal is compatible with both DINT and LREAL variables.
+    - other numbers are emitted as-is
     """
     if isinstance(value, str):
         escaped = value.replace("'", "''")
         return f"'{escaped}'"
+    if isinstance(value, float) and value == int(value):
+        return str(int(value))
     return str(value)
+
+
+def _format_server_ip(value: str) -> str:
+    """
+    Format the tcp.server_ip value for a ST assignment.
+
+    If the value contains exactly 3 dots it is treated as a literal IP address
+    and emitted as a single-quoted string.
+    Otherwise it is treated as a PLC variable / tag reference and emitted
+    without quotes.
+
+    Examples:
+        "192.168.1.10"  ->  "'192.168.1.10'"
+        "sPlcAddress2"  ->  "sPlcAddress2"
+    """
+    if value.count(".") == 3:
+        escaped = value.replace("'", "''")
+        return f"'{escaped}'"
+    return value
 
 
 def _emit_optional_scalar_assignment_with_task(
@@ -160,15 +183,17 @@ def _emit_init_sec_node(
         )
     )
 
-    lines.extend(
-        _emit_optional_scalar_assignment_with_task(
-            "SECOP.GVL.G_st_SecNode.sTcpServerIp",
-            sec_node.tcp_server_ip,
-            "SecopInit.sec_node.tcp.server_ip",
-            "Configure SEC node TCP server IP.",
-            tasklist,
+    if sec_node.tcp_server_ip is None:
+        lines.append(
+            tasklist.make_st_comment(
+                plc_path="SecopInit.sec_node.tcp.server_ip",
+                message="Configure SEC node TCP server IP.",
+            )
         )
-    )
+    else:
+        lines.append(
+            f"SECOP.GVL.G_st_SecNode.sTcpServerIp := {_format_server_ip(sec_node.tcp_server_ip)};"
+        )
 
     lines.extend(
         _emit_optional_scalar_assignment_with_task(
@@ -217,48 +242,32 @@ def _emit_module_init(
     lines.append(f"{pfx}.sDescription := {_format_st_scalar(module.description)};")
 
     if module.target_has_min_max:
-        lines.append(f"{pfx}.{module.value_var_prefix}TargetMin := {module.target_min};")
-        lines.append(f"{pfx}.{module.value_var_prefix}TargetMax := {module.target_max};")
-
-    if module.interface_class == "Drivable" and module.value_is_numeric:
-        if module.target_drive_tolerance is not None:
-            lines.append(
-                f"{pfx}.{module.value_var_prefix}TargetDriveTolerance := {module.target_drive_tolerance};"
-            )
-        else:
-            lines.append(
-                tasklist.make_st_comment(
-                    plc_path=f"SecopInit.{module.module_name}.target_drive_tolerance",
-                    message=(
-                        f"Configure target drive absolute tolerance for module "
-                        f"{module.module_name}."
-                    ),
-                )
-            )
+        lines.append(f"{pfx}.{module.value_var_prefix}TargetMin := {_format_st_scalar(module.target_min)};")
+        lines.append(f"{pfx}.{module.value_var_prefix}TargetMax := {_format_st_scalar(module.target_max)};")
 
     if module.value_has_min_max:
-        lines.append(f"{pfx}.{module.value_var_prefix}ValueMin := {module.value_min};")
-        lines.append(f"{pfx}.{module.value_var_prefix}ValueMax := {module.value_max};")
+        lines.append(f"{pfx}.{module.value_var_prefix}ValueMin := {_format_st_scalar(module.value_min)};")
+        lines.append(f"{pfx}.{module.value_var_prefix}ValueMax := {_format_st_scalar(module.value_max)};")
 
     if module.value_has_out_of_range:
-        lines.append(f"{pfx}.{module.value_var_prefix}ValueOutOfRangeL := {module.value_out_of_range_l};")
-        lines.append(f"{pfx}.{module.value_var_prefix}ValueOutOfRangeH := {module.value_out_of_range_h};")
+        lines.append(f"{pfx}.{module.value_var_prefix}ValueOutOfRangeL := {_format_st_scalar(module.value_out_of_range_l)};")
+        lines.append(f"{pfx}.{module.value_var_prefix}ValueOutOfRangeH := {_format_st_scalar(module.value_out_of_range_h)};")
 
     if module.target_has_limits_tuple or module.target_has_limits_min or module.target_has_limits_max:
         vp = module.value_var_prefix
         # lrTargetLimitsMin / lrTargetLimitsMax: current lower/upper limit values
         # lrTargetLimitsMin_Min/Max: allowed range for the min-limit parameter
         # lrTargetLimitsMax_Min/Max: allowed range for the max-limit parameter
-        lines.append(f"{pfx}.{vp}TargetLimitsMin     := {module.target_limits_min_min};")
-        lines.append(f"{pfx}.{vp}TargetLimitsMax     := {module.target_limits_max_max};")
-        lines.append(f"{pfx}.{vp}TargetLimitsMin_Min := {module.target_limits_min_min};")
-        lines.append(f"{pfx}.{vp}TargetLimitsMin_Max := {module.target_limits_min_max};")
-        lines.append(f"{pfx}.{vp}TargetLimitsMax_Min := {module.target_limits_max_min};")
-        lines.append(f"{pfx}.{vp}TargetLimitsMax_Max := {module.target_limits_max_max};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMin     := {_format_st_scalar(module.target_limits_min_min)};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMax     := {_format_st_scalar(module.target_limits_max_max)};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMin_Min := {_format_st_scalar(module.target_limits_min_min)};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMin_Max := {_format_st_scalar(module.target_limits_min_max)};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMax_Min := {_format_st_scalar(module.target_limits_max_min)};")
+        lines.append(f"{pfx}.{vp}TargetLimitsMax_Max := {_format_st_scalar(module.target_limits_max_max)};")
 
     lines.append(f"{pfx}.stPollInterval.lrValue := 5;")
-    lines.append(f"{pfx}.stPollInterval.lrMin := {module.pollinterval_min};")
-    lines.append(f"{pfx}.stPollInterval.lrMax := {module.pollinterval_max};")
+    lines.append(f"{pfx}.stPollInterval.lrMin := {_format_st_scalar(module.pollinterval_min)};")
+    lines.append(f"{pfx}.stPollInterval.lrMax := {_format_st_scalar(module.pollinterval_max)};")
     lines.append(f"{pfx}.stPollInterval.xReadOnly := {_bool_literal(module.pollinterval_readonly)};")
 
     if module.interface_class == "Drivable":

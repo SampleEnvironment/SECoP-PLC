@@ -104,12 +104,19 @@ class ResolvedRealModuleTargetPlc:
     Current supported patterns:
     - numeric / string target -> write_stmt
     - enum target             -> enum_tag
+
+    limit_min_expr / limit_max_expr:
+        PLC expressions used when the corresponding limit accessible is readonly.
+        The SecopMapFromPlc generator uses these to assign lrTargetLimitsMin/Max
+        from a PLC process variable each CPU cycle.
     """
     write_stmt: str | None
     enum_tag: str | None
     change_possible_expr: str | None
     reach_timeout_s: int | None
-    reach_abs_tolerance: float | int | None
+    reach_abs_tolerance_expr: str | None
+    limit_min_expr: str | None
+    limit_max_expr: str | None
 
 
 @dataclass(frozen=True)
@@ -160,6 +167,8 @@ class ResolvedRealModule:
     target_has_limits_min: bool | None
     target_has_limits_max: bool | None
     target_has_limits_tuple_readonly: bool | None
+    target_has_limits_min_readonly: bool | None
+    target_has_limits_max_readonly: bool | None
     target_has_drive_tolerance: bool | None
 
     value_min: float | int | None
@@ -179,8 +188,6 @@ class ResolvedRealModule:
     target_limits_min_max: float | int | None   # upper bound of the min-limit parameter
     target_limits_max_min: float | int | None   # lower bound of the max-limit parameter
     target_limits_max_max: float | int | None   # upper bound of the max-limit parameter
-
-    target_drive_tolerance: float | int | None
 
     pollinterval_min: float | None
     pollinterval_max: float | None
@@ -526,7 +533,9 @@ def _resolve_one_real_module(
         enum_tag=_strip_or_none(xplc_target.get("enum_tag")) if xplc_target else None,
         change_possible_expr=_strip_or_none(xplc_target.get("change_possible_expr")) if xplc_target else None,
         reach_timeout_s=xplc_target.get("reach_timeout_s") if xplc_target else None,
-        reach_abs_tolerance=xplc_target.get("reach_abs_tolerance") if xplc_target else None,
+        reach_abs_tolerance_expr=_strip_or_none(xplc_target.get("reach_abs_tolerance_expr")) if xplc_target else None,
+        limit_min_expr=_strip_or_none(xplc_target.get("limit_min_expr")) if xplc_target else None,
+        limit_max_expr=_strip_or_none(xplc_target.get("limit_max_expr")) if xplc_target else None,
     )
 
     # ------------------------------------------------------------
@@ -564,6 +573,8 @@ def _resolve_one_real_module(
         target_has_limits_min=resolved_class.target.has_limits_min if resolved_class.target else None,
         target_has_limits_max=resolved_class.target.has_limits_max if resolved_class.target else None,
         target_has_limits_tuple_readonly=resolved_class.target.has_limits_tuple_readonly if resolved_class.target else None,
+        target_has_limits_min_readonly=resolved_class.target.has_limits_min_readonly if resolved_class.target else None,
+        target_has_limits_max_readonly=resolved_class.target.has_limits_max_readonly if resolved_class.target else None,
         target_has_drive_tolerance=resolved_class.target.has_drive_tolerance if resolved_class.target else None,
 
         value_min=value_min,
@@ -577,7 +588,6 @@ def _resolve_one_real_module(
         target_limits_min_max=target_limits_min_max,
         target_limits_max_min=target_limits_max_min,
         target_limits_max_max=target_limits_max_max,
-        target_drive_tolerance=resolved_x_target.reach_abs_tolerance,
 
         pollinterval_min=pollinterval_min,
         pollinterval_max=pollinterval_max,

@@ -218,7 +218,18 @@ class PlcTargetConfig(StrictBaseModel):
     enum_tag: Optional[str] = None
     change_possible_expr: Optional[str] = None
     reach_timeout_s: Optional[int] = None
-    reach_abs_tolerance: Optional[float] = None
+
+    # PLC expression for the absolute drive tolerance (Drivable numeric modules only).
+    # A string expression (not a constant) so that the tolerance can come from a
+    # live PLC process variable, e.g. "REAL_TO_LREAL(G_rMfSetpointAbsTol)".
+    # Assigned every CPU cycle in SecopMapFromPlc.
+    reach_abs_tolerance_expr: Optional[str] = None
+
+    # PLC expressions used to assign readonly target limits from process variables.
+    # Required when target_min / target_max / target_limits is configured with
+    # readonly=true (PLC-driven limits that SECoP clients cannot change).
+    limit_min_expr: Optional[str] = None
+    limit_max_expr: Optional[str] = None
 
 
 class PlcClearErrorsConfig(StrictBaseModel):

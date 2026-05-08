@@ -32,6 +32,7 @@ from codegen.resolve.real_modules import (
 )
 from codegen.resolve.types import ResolvedModuleClasses, ResolvedCustomParameter
 from codegen.tasklist import TaskList
+from codegen.generators.st.st_utils import sanitize_enum_member_name
 
 
 def _module_prefix(module_name: str) -> str:
@@ -193,8 +194,9 @@ def _emit_value_mapping(
         if enum_tag and members:
             lines.append(f"CASE {enum_tag} OF")
             for member_name, member_value in members:
+                st_name = sanitize_enum_member_name(member_name)
                 lines.append(
-                    f" {member_value}: {pfx}.etValue := ET_Module_{module.module_class_name}_value.{member_name};"
+                    f" {member_value}: {pfx}.etValue := ET_Module_{module.module_class_name}_value.{st_name};"
                 )
             lines.append("END_CASE")
         else:
@@ -415,7 +417,8 @@ def _emit_one_custom_parameter_mapping(
         if enum_tag and members:
             lines.append(f"CASE {enum_tag} OF")
             for member_name, member_value in members:
-                lines.append(f" {member_value}: {lhs} := {cp.plc_type}.{member_name};")
+                st_name = sanitize_enum_member_name(member_name)
+                lines.append(f" {member_value}: {lhs} := {cp.plc_type}.{st_name};")
             lines.append("END_CASE")
         else:
             lines.append(
@@ -461,6 +464,115 @@ def _emit_custom_parameters(
     return lines
 
 
+def _emit_target_limits_plc_mapping(
+    module: ResolvedRealModule,
+    tasklist: TaskList,
+) -> list[str]:
+    """
+    Emit PLC-driven readonly target limits mapping.
+
+    When a limit accessible is readonly (PLC-driven rather than SECoP-client-driven),
+    the live PLC process value must be assigned to lrTargetLimitsMin / lrTargetLimitsMax
+    every CPU cycle.  The expression comes from x-plc.target.limit_min/max_expr.
+
+    Called for:
+    - target_min  with readonly=true  -> assign lrTargetLimitsMin from limit_min_expr
+    - target_max  with readonly=true  -> assign lrTargetLimitsMax from limit_max_expr
+    - target_limits with readonly=true -> assign both
+    """
+    lines: list[str] = []
+
+    # Determine which sides need PLC-driven assignment
+    need_min = (
+        (bool(module.target_has_limits_min)   and bool(module.target_has_limits_min_readonly)) or
+        (bool(module.target_has_limits_tuple) and bool(module.target_has_limits_tuple_readonly))
+    )
+    need_max = (
+        (bool(module.target_has_limits_max)   and bool(module.target_has_limits_max_readonly)) or
+        (bool(module.target_has_limits_tuple) and bool(module.target_has_limits_tuple_readonly))
+    )
+
+    if not need_min and not need_max:
+        return lines
+
+    pfx = _module_prefix(module.module_name)
+    vp  = module.value_var_prefix
+
+    if need_min:
+        lines.append("// Target limit min")
+        expr = module.x_plc_target.limit_min_expr if module.x_plc_target else None
+        if expr:
+            lines.append(f"{pfx}.{vp}TargetLimitsMin := {expr};")
+        else:
+            lines.append(
+                tasklist.make_st_comment(
+                    plc_path=f"SecopMapFromPlc.{module.module_name}.target_limits_min",
+                    message=(
+                        f"Map PLC process expression to {vp}TargetLimitsMin for module "
+                        f"{module.module_name} (missing x-plc.target.limit_min_expr)."
+                    ),
+                )
+            )
+        lines.append("")
+
+    if need_max:
+        lines.append("// Target limit max")
+        expr = module.x_plc_target.limit_max_expr if module.x_plc_target else None
+        if expr:
+            lines.append(f"{pfx}.{vp}TargetLimitsMax := {expr};")
+        else:
+            lines.append(
+                tasklist.make_st_comment(
+                    plc_path=f"SecopMapFromPlc.{module.module_name}.target_limits_max",
+                    message=(
+                        f"Map PLC process expression to {vp}TargetLimitsMax for module "
+                        f"{module.module_name} (missing x-plc.target.limit_max_expr)."
+                    ),
+                )
+            )
+        lines.append("")
+
+    return lines
+
+
+def _emit_target_drive_tolerance_mapping(
+    module: ResolvedRealModule,
+    tasklist: TaskList,
+) -> list[str]:
+    """
+    Emit PLC-driven drive tolerance mapping for Drivable numeric modules.
+
+    The tolerance is assigned every CPU cycle from a PLC expression so that it
+    can track a live process variable rather than a fixed constant at init time.
+    """
+    lines: list[str] = []
+
+    if module.interface_class != "Drivable" or not module.value_is_numeric:
+        return lines
+
+    pfx = _module_prefix(module.module_name)
+    vp  = module.value_var_prefix
+
+    lines.append("// Target reach absolute tolerance")
+    expr = module.x_plc_target.reach_abs_tolerance_expr if module.x_plc_target else None
+    if expr:
+        lines.append(f"{pfx}.{vp}TargetDriveTolerance := {expr};")
+    else:
+        lines.append(
+            tasklist.make_st_comment(
+                plc_path=f"SecopMapFromPlc.{module.module_name}.target_drive_tolerance",
+                message=(
+                    f"Configure target drive absolute tolerance mapping for module "
+                    f"{module.module_name} "
+                    f"(missing x-plc.target.reach_abs_tolerance_expr)."
+                ),
+            )
+        )
+    lines.append("")
+
+    return lines
+
+
 def _emit_module_mapping(
     module: ResolvedRealModule,
     resolved_classes: ResolvedModuleClasses,
@@ -477,6 +589,8 @@ def _emit_module_mapping(
 
     lines.extend(_emit_value_mapping(module, resolved_classes, tasklist))
     lines.extend(_emit_target_change_interlock(module, tasklist))
+    lines.extend(_emit_target_limits_plc_mapping(module, tasklist))
+    lines.extend(_emit_target_drive_tolerance_mapping(module, tasklist))
     lines.extend(_emit_timestamp_mapping(module, tasklist))
     lines.extend(_emit_clear_errors_reset(module))
     lines.extend(_emit_status_block(module))

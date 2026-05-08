@@ -29,6 +29,7 @@ from codegen.resolve.real_modules import (
 )
 from codegen.resolve.types import ResolvedModuleClasses
 from codegen.tasklist import TaskList
+from codegen.generators.st.st_utils import sanitize_enum_member_name
 
 
 def _module_prefix(module_name: str) -> str:
@@ -191,8 +192,9 @@ def _emit_drivable_apply_target_block(
         if enum_tag and members:
             lines.append(f" CASE {pfx}.etTarget OF")
             for member_name, member_value in members:
+                st_name = sanitize_enum_member_name(member_name)
                 lines.append(
-                    f"  {member_value}: {enum_tag} := ET_Module_{module.module_class_name}_value.{member_name};"
+                    f"  {member_value}: {enum_tag} := ET_Module_{module.module_class_name}_value.{st_name};"
                 )
             lines.append(" END_CASE")
         else:
@@ -278,8 +280,9 @@ def _emit_writable_apply_target_block(
             if enum_tag and members:
                 lines.append(f" CASE {pfx}.etTarget OF")
                 for member_name, member_value in members:
+                    st_name = sanitize_enum_member_name(member_name)
                     lines.append(
-                        f"  {member_value}: {enum_tag} := ET_Module_{module.module_class_name}_value.{member_name};"
+                        f"  {member_value}: {enum_tag} := ET_Module_{module.module_class_name}_value.{st_name};"
                     )
                 lines.append(" END_CASE")
             else:

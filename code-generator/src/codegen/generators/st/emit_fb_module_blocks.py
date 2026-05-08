@@ -22,6 +22,7 @@ from codegen.resolve.types import (
     ResolvedModuleClass,
 )
 from codegen.tasklist import TaskList
+from codegen.generators.st.st_utils import sanitize_enum_member_name
 
 
 # ---------------------------------------------------------
@@ -657,15 +658,15 @@ def emit_var_internal(resolved: ResolvedModuleClass) -> list[str]:
             vp = resolved.value.var_prefix
             pt = resolved.value.plc_type
 
-            # lrTargetLimitMinNewVal: needed when a client can change target_min
-            # (always writable when present) or when target_limits tuple is writable
+            # lrTargetLimitMinNewVal: needed when a SECoP client can change target_min
+            # (present and writable, readonly=false) or when target_limits tuple is writable
             if (bool(t.has_limits_tuple) and not bool(t.has_limits_tuple_readonly)) or \
-               bool(t.has_limits_min):
+               (bool(t.has_limits_min) and not bool(t.has_limits_min_readonly)):
                 lines.append(f" {vp}TargetLimitMinNewVal: {pt};")
 
             # lrTargetLimitMaxNewVal: same logic for the max side
             if (bool(t.has_limits_tuple) and not bool(t.has_limits_tuple_readonly)) or \
-               bool(t.has_limits_max):
+               (bool(t.has_limits_max) and not bool(t.has_limits_max_readonly)):
                 lines.append(f" {vp}TargetLimitMaxNewVal: {pt};")
 
             # STRING/UINT locals for tuple parsing (always present when tuple is configured)
@@ -792,7 +793,8 @@ def _emit_enum_out_of_range_block(resolved: ResolvedModuleClass) -> list[str]:
     for idx, member_name in enumerate(members):
         prefix = " IF" if idx == 0 else "  AND"
         suffix = " THEN" if idx == len(members) - 1 else ""
-        lines.append(f"{prefix} iq_etValue <> ET_Module_{resolved.name}_value.{member_name}{suffix}")
+        st_name = sanitize_enum_member_name(member_name)
+        lines.append(f"{prefix} iq_etValue <> ET_Module_{resolved.name}_value.{st_name}{suffix}")
 
     lines.append("  iq_stStatus.etCode := SECOP.ET_StatusCode.Error;")
     lines.append("  iq_stStatus.sDescription := 'Value set to unspecified enum variant';")
@@ -1199,15 +1201,15 @@ def _emit_sync_change(resolved: ResolvedModuleClass, tasklist: TaskList) -> list
         lines.extend(_emit_change_target_limits(resolved))
         first_branch_started = True
 
-    # target_min: always writable when present (validation rejects readonly=true)
-    if t is not None and t.has_limits_min:
+    # target_min: emit change block only when writable (readonly=false)
+    if t is not None and t.has_limits_min and not t.has_limits_min_readonly:
         lines.append("")
         lines.append("  // target_min")
         lines.extend(_emit_change_target_limit(resolved, "min"))
         first_branch_started = True
 
-    # target_max: always writable when present (validation rejects readonly=true)
-    if t is not None and t.has_limits_max:
+    # target_max: emit change block only when writable (readonly=false)
+    if t is not None and t.has_limits_max and not t.has_limits_max_readonly:
         lines.append("")
         lines.append("  // target_max")
         lines.extend(_emit_change_target_limit(resolved, "max"))
@@ -1227,6 +1229,12 @@ def _emit_sync_change(resolved: ResolvedModuleClass, tasklist: TaskList) -> list
     # target_limits: add to readonly block only when configured and readonly=true
     if t is not None and t.has_limits_tuple and t.has_limits_tuple_readonly:
         readonly_names.append("target_limits")
+
+    # target_min / target_max: add to readonly block when configured and readonly=true
+    if t is not None and t.has_limits_min and t.has_limits_min_readonly:
+        readonly_names.append("target_min")
+    if t is not None and t.has_limits_max and t.has_limits_max_readonly:
+        readonly_names.append("target_max")
 
     if not resolved.pollinterval_changeable:
         readonly_names.append("pollinterval")
@@ -1266,7 +1274,8 @@ def _emit_stop_apply_new_target(resolved: ResolvedModuleClass, tasklist: TaskLis
     if resolved.value.is_enum and resolved.value.members:
         lines.append("     CASE iq_etValue OF")
         for member_name, member_value in resolved.value.members.items():
-            lines.append(f"      {member_value}: iq_etTargetChangeNewVal := ET_Module_{resolved.name}_value.{member_name};")
+            st_name = sanitize_enum_member_name(member_name)
+            lines.append(f"      {member_value}: iq_etTargetChangeNewVal := ET_Module_{resolved.name}_value.{st_name};")
         lines.append("     END_CASE")
         return lines
 
