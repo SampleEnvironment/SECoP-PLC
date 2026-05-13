@@ -669,6 +669,16 @@ def emit_var_internal(resolved: ResolvedModuleClass) -> list[str]:
                (bool(t.has_limits_max) and not bool(t.has_limits_max_readonly)):
                 lines.append(f" {vp}TargetLimitMaxNewVal: {pt};")
 
+            # xTargetLimitMinChanged: set when target_min or the min component of target_limits changes
+            if (bool(t.has_limits_tuple) and not bool(t.has_limits_tuple_readonly)) or \
+               (bool(t.has_limits_min) and not bool(t.has_limits_min_readonly)):
+                lines.append(" xTargetLimitMinChanged: BOOL;")
+
+            # xTargetLimitMaxChanged: set when target_max or the max component of target_limits changes
+            if (bool(t.has_limits_tuple) and not bool(t.has_limits_tuple_readonly)) or \
+               (bool(t.has_limits_max) and not bool(t.has_limits_max_readonly)):
+                lines.append(" xTargetLimitMaxChanged: BOOL;")
+
             # STRING/UINT locals for tuple parsing (always present when tuple is configured)
             if bool(t.has_limits_tuple):
                 lines.append(" sLimitsMin: STRING;")
@@ -747,7 +757,7 @@ def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> list[str]
         lines.append("  iq_stStatus.sDescription := 'Measure fault';")
         lines.append("  iq_stErrorReport.xActive := TRUE;")
         lines.append("  iq_stErrorReport.sClass := 'OutOfRange';")
-        lines.append("  iq_stErrorReport.sDescription := 'Sensor or calibration range is between ';")
+        lines.append("  iq_stErrorReport.sDescription := 'Range is between ';")
         lines.append(f"  sMin := {to_string_func}(iq_{value_prefix}ValueMin);")
         lines.append("  StrConcatA(pstFrom:= ADR(sMin), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
         lines.append("  StrConcatA(pstFrom:= ADR(' and '), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
@@ -762,7 +772,7 @@ def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> list[str]
             f"{keyword} (iq_{value_prefix}Value < iq_{value_prefix}ValueMin OR iq_{value_prefix}Value > iq_{value_prefix}ValueMax) THEN"
         )
         lines.append("  iq_stStatus.etCode := SECOP.ET_StatusCode.Warn;")
-        lines.append("  iq_stStatus.sDescription := 'Value read from hardware out of range. Sensor or calibration range is between ';")
+        lines.append("  iq_stStatus.sDescription := 'Out of range value. Range is between ';")
         lines.append(f"  sMin := {to_string_func}(iq_{value_prefix}ValueMin);")
         lines.append("  StrConcatA(pstFrom:= ADR(sMin), pstTo:= ADR(iq_stStatus.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
         lines.append("  StrConcatA(pstFrom:= ADR(' and '), pstTo:= ADR(iq_stStatus.sDescription), iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeDescription));")
@@ -1070,6 +1080,7 @@ def _emit_change_target_limit(
     lines.append("    ")
     lines.append("    ELSE // Apply new limit value")
     lines.append(f"     {limits_var} := {temp_var};")
+    lines.append(f"     xTargetLimit{Which}Changed := TRUE;")
     lines.append(f"     M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'changed', i_sAccessible := i_sAccessible, i_sDataReport:= {to_str}({limits_var}));")
     lines.append("    END_IF")
     lines.append("   END_IF")
@@ -1148,6 +1159,8 @@ def _emit_change_target_limits(resolved: ResolvedModuleClass) -> list[str]:
     lines.append("     ELSE // Apply new limit values")
     lines.append(f"      iq_{p}TargetLimitsMin := {temp_min};")
     lines.append(f"      iq_{p}TargetLimitsMax := {temp_max};")
+    lines.append("      xTargetLimitMinChanged := TRUE;")
+    lines.append("      xTargetLimitMaxChanged := TRUE;")
     lines.append(f"      M_GenerateTargetLimitsDataReport(i_sLimitsMin:= {to_str}(iq_{p}TargetLimitsMin), i_sLimitsMax:= {to_str}(iq_{p}TargetLimitsMax)); // Generate target limits data report and store it in sBuiltDataReport")
     lines.append("      M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'changed', i_sAccessible := i_sAccessible, i_sDataReport:= sBuiltDataReport);")
     lines.append("     END_IF")
@@ -1491,6 +1504,18 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
     """
     lines: list[str] = []
 
+    # Determine whether writable limit flags exist so we can add them to the
+    # trigger condition, the delta-update block, and the reset block.
+    _t = resolved.target
+    has_writable_min = _t is not None and (
+        (bool(_t.has_limits_tuple) and not bool(_t.has_limits_tuple_readonly)) or
+        (bool(_t.has_limits_min) and not bool(_t.has_limits_min_readonly))
+    )
+    has_writable_max = _t is not None and (
+        (bool(_t.has_limits_tuple) and not bool(_t.has_limits_tuple_readonly)) or
+        (bool(_t.has_limits_max) and not bool(_t.has_limits_max_readonly))
+    )
+
     lines.append("// Handle module updates for subscribed clients")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("")
@@ -1509,9 +1534,19 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
         lines.append("IF fbRtrigIsFirstClient.Q AND")
         lines.append(" (xPollIntervalDone OR xPollIntervalChanged) THEN")
     else:
+        # Build the extra condition flags for writable limit parameters
+        extra_flags = []
+        if has_writable_min:
+            extra_flags.append("xTargetLimitMinChanged")
+        if has_writable_max:
+            extra_flags.append("xTargetLimitMaxChanged")
+
         lines.append("IF fbRtrigIsFirstClient.Q AND")
         lines.append(" ((xPollIntervalDone OR xPollIntervalChanged)")
-        lines.append("  OR xTargetChanged) THEN")
+        if extra_flags:
+            lines.append(f"  OR xTargetChanged OR {' OR '.join(extra_flags)}) THEN")
+        else:
+            lines.append("  OR xTargetChanged) THEN")
     lines.append("  xUpdateAllSubscribers := TRUE;")
     lines.append("END_IF")
     lines.append("")
@@ -1526,15 +1561,15 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
     lines.extend(_indent(_emit_all_parameter_reports("'update'", resolved, tasklist, context="update"), 2))
 
     lines.append("  ELSE")
-    lines.append("   // Update subscribers when changing the polling interval")
-    lines.append("   IF xPollIntervalChanged AND NOT (iq_stPollInterval.stPollintervalChangeClient.sIp = i_stClientMonitored.sIp AND iq_stPollInterval.stPollintervalChangeClient.uiPort = i_stClientMonitored.uiPort) THEN")
+    lines.append("   // Update subscribers when changing polling interval")
+    lines.append("   IF xPollIntervalChanged THEN")
     lines.append("    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'update', i_sAccessible := 'pollinterval', i_sDataReport:= LREAL_TO_STRING(iq_stPollInterval.lrValue)); // Poll interval")
     lines.append("   END_IF")
 
     if resolved.interface_class == "Writable":
         target_expr = f"iq_{resolved.value.var_prefix}Target"
-        lines.append("   // Update subscribers when changing the target")
-        lines.append("   IF xTargetChanged AND NOT (iq_stTargetWrite.stTargetChangeClient.sIp = i_stClientMonitored.sIp AND iq_stTargetWrite.stTargetChangeClient.uiPort = i_stClientMonitored.uiPort) THEN")
+        lines.append("   // Update subscribers when changing target")
+        lines.append("   IF xTargetChanged THEN")
         lines.extend(
             _target_data_report_lines(
                 resolved=resolved,
@@ -1546,6 +1581,31 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
         )
         lines.append("   END_IF")
 
+    # Update subscribers when a writable limit parameter changed (between poll intervals)
+    if has_writable_min and _t is not None and _t.has_limits_min:
+        lines.append("   // Update subscribers when changing target_min limit")
+        lines.append("   IF xTargetLimitMinChanged THEN")
+        lines.extend(_indent(_emit_report_target_min("'update'", resolved), 2))
+        lines.append("   END_IF")
+
+    if has_writable_max and _t is not None and _t.has_limits_max:
+        lines.append("   // Update subscribers when changing target_max limit")
+        lines.append("   IF xTargetLimitMaxChanged THEN")
+        lines.extend(_indent(_emit_report_target_max("'update'", resolved), 2))
+        lines.append("   END_IF")
+
+    # target_limits tuple: report when either limit component changed
+    if _t is not None and _t.has_limits_tuple and (has_writable_min or has_writable_max):
+        lines.append("   // Update subscribers when changing target_limits tuple")
+        if has_writable_min and has_writable_max:
+            lines.append("   IF xTargetLimitMinChanged OR xTargetLimitMaxChanged THEN")
+        elif has_writable_min:
+            lines.append("   IF xTargetLimitMinChanged THEN")
+        else:
+            lines.append("   IF xTargetLimitMaxChanged THEN")
+        lines.extend(_indent(_emit_report_target_limits_tuple("'update'", resolved), 2))
+        lines.append("   END_IF")
+
     lines.append("  END_IF")
     lines.append(" END_IF")
     lines.append("END_IF")
@@ -1554,11 +1614,7 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
     lines.append("IF xUpdateAllSubscribers AND fbRtrigAllClientsDone.Q THEN")
     lines.append(" xPollIntervalDone := FALSE;")
     lines.append(" xUpdateAllSubscribers := FALSE;")
-    lines.append(" IF xPollIntervalChanged THEN")
-    lines.append("  xPollIntervalChanged := FALSE;")
-    lines.append("  iq_stPollInterval.stPollintervalChangeClient.sIp := '';")
-    lines.append("  iq_stPollInterval.stPollintervalChangeClient.uiPort := 0;")
-    lines.append(" END_IF")
+    lines.append(" xPollIntervalChanged := FALSE;")
 
     if resolved.interface_class == "Writable":
         lines.append(" IF xTargetChanged THEN")
@@ -1566,6 +1622,11 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
         lines.append("  iq_stTargetWrite.stTargetChangeClient.sIp := '';")
         lines.append("  iq_stTargetWrite.stTargetChangeClient.uiPort := 0;")
         lines.append(" END_IF")
+
+    if has_writable_min:
+        lines.append(" xTargetLimitMinChanged := FALSE;")
+    if has_writable_max:
+        lines.append(" xTargetLimitMaxChanged := FALSE;")
 
     lines.append("END_IF")
     lines.append("")

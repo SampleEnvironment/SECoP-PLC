@@ -114,7 +114,6 @@ def _emit_enum_type(type_name: str, members: dict[str, int]) -> str:
 
     lines: list[str] = []
     lines.append("{attribute 'qualified_only' := ''}")
-    lines.append("{attribute 'strict' := ''}")
     lines.append(f"TYPE {type_name} :")
     lines.append("(")
 

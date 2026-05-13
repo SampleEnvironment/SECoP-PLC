@@ -295,7 +295,6 @@ def main() -> int:
     st_secop_init = emit_prg_secop_init(resolved_real_modules, tasklist)
     st_secop_map_from_plc = emit_prg_secop_map_from_plc(
         resolved_real_modules,
-        resolved,
         tasklist,
     )
     st_secop_map_to_plc = emit_prg_secop_map_to_plc(

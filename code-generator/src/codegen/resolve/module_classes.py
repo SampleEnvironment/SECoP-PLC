@@ -553,11 +553,16 @@ def _custom_enum_type_name(modclass: str, secop_name: str) -> str:
     """
     Build the enum DUT name for a customised parameter of enum type.
 
+    The leading underscore of the SECoP custom-parameter name is stripped so
+    the separator between module class and parameter name stays a single '_'.
+
     Example:
         modclass='tc', secop_name='_sensor'
-        -> ET_Module_tc__sensor
+        -> ET_Module_tc_Sensor
     """
-    return f"ET_Module_{modclass}_{secop_name}"
+    stem = secop_name.lstrip("_") or secop_name
+    nice = stem[0].upper() + stem[1:]
+    return f"ET_Module_{modclass}_{nice}"
 
 
 def _resolve_custom_parameters(

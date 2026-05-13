@@ -30,9 +30,8 @@ from codegen.resolve.real_modules import (
     ResolvedRealModules,
     ResolvedRealCustomParameterPlc,
 )
-from codegen.resolve.types import ResolvedModuleClasses, ResolvedCustomParameter
+from codegen.resolve.types import ResolvedCustomParameter
 from codegen.tasklist import TaskList
-from codegen.generators.st.st_utils import sanitize_enum_member_name
 
 
 def _module_prefix(module_name: str) -> str:
@@ -74,32 +73,6 @@ def _emit_call_secop_init() -> list[str]:
 
     return lines
 
-
-def _resolved_enum_members(
-    module: ResolvedRealModule,
-    resolved_classes: ResolvedModuleClasses,
-) -> list[tuple[str, int]]:
-    """
-    Return enum members for a real module using its resolved module class.
-
-    Returned format:
-        [(member_name, member_value), ...]
-    """
-    resolved_class = resolved_classes.classes[module.module_class_name]
-    if not resolved_class.value.members:
-        return []
-    return list(resolved_class.value.members.items())
-
-
-def _custom_parameter_enum_members(
-    cp: ResolvedCustomParameter,
-) -> list[tuple[str, int]]:
-    """
-    Return enum members for one resolved customised parameter.
-    """
-    if not cp.members:
-        return []
-    return list(cp.members.items())
 
 
 def _emit_sec_node_mapping(
@@ -155,7 +128,6 @@ def _emit_sec_node_mapping(
 
 def _emit_value_mapping(
     module: ResolvedRealModule,
-    resolved_classes: ResolvedModuleClasses,
     tasklist: TaskList,
 ) -> list[str]:
     """
@@ -163,7 +135,8 @@ def _emit_value_mapping(
 
     Supported patterns:
     - numeric / string value -> x-plc.value.read_expr
-    - enum value             -> x-plc.value.enum_tag
+    - enum value             -> x-plc.value.enum_tag (direct assignment; range
+                                checking is handled in FB_Module_* at runtime)
     """
     lines: list[str] = []
     pfx = _module_prefix(module.module_name)
@@ -189,16 +162,9 @@ def _emit_value_mapping(
 
     if module.value_is_enum:
         enum_tag = module.x_plc_value.enum_tag if module.x_plc_value else None
-        members = _resolved_enum_members(module, resolved_classes)
 
-        if enum_tag and members:
-            lines.append(f"CASE {enum_tag} OF")
-            for member_name, member_value in members:
-                st_name = sanitize_enum_member_name(member_name)
-                lines.append(
-                    f" {member_value}: {pfx}.etValue := ET_Module_{module.module_class_name}_value.{st_name};"
-                )
-            lines.append("END_CASE")
+        if enum_tag:
+            lines.append(f"{pfx}.etValue := {enum_tag};")
         else:
             lines.append(
                 tasklist.make_st_comment(
@@ -412,14 +378,9 @@ def _emit_one_custom_parameter_mapping(
 
     if cp.is_enum:
         enum_tag = cp_plc.enum_tag if cp_plc else None
-        members = _custom_parameter_enum_members(cp)
 
-        if enum_tag and members:
-            lines.append(f"CASE {enum_tag} OF")
-            for member_name, member_value in members:
-                st_name = sanitize_enum_member_name(member_name)
-                lines.append(f" {member_value}: {lhs} := {cp.plc_type}.{st_name};")
-            lines.append("END_CASE")
+        if enum_tag:
+            lines.append(f"{lhs} := {enum_tag};")
         else:
             lines.append(
                 tasklist.make_st_comment(
@@ -575,7 +536,6 @@ def _emit_target_drive_tolerance_mapping(
 
 def _emit_module_mapping(
     module: ResolvedRealModule,
-    resolved_classes: ResolvedModuleClasses,
     tasklist: TaskList,
 ) -> list[str]:
     """
@@ -587,7 +547,7 @@ def _emit_module_mapping(
     lines.append("// -----------------------------------------------------------------")
     lines.append("")
 
-    lines.extend(_emit_value_mapping(module, resolved_classes, tasklist))
+    lines.extend(_emit_value_mapping(module, tasklist))
     lines.extend(_emit_target_change_interlock(module, tasklist))
     lines.extend(_emit_target_limits_plc_mapping(module, tasklist))
     lines.extend(_emit_target_drive_tolerance_mapping(module, tasklist))
@@ -601,7 +561,6 @@ def _emit_module_mapping(
 
 def emit_prg_secop_map_from_plc(
     resolved_real_modules: ResolvedRealModules,
-    resolved_module_classes: ResolvedModuleClasses,
     tasklist: TaskList,
 ) -> str:
     """
@@ -617,7 +576,6 @@ def emit_prg_secop_map_from_plc(
         lines.extend(
             _emit_module_mapping(
                 resolved_real_modules.modules[module_name],
-                resolved_module_classes,
                 tasklist,
             )
         )

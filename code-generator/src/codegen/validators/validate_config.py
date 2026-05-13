@@ -45,6 +45,7 @@ from codegen.rules.secop_rules import (
     rule_command_datainfo_shape,
     rule_numeric_ranges_coherent,
     rule_numeric_ranges_must_define_both_ends,
+    rule_int_type_requires_min_max,
     rule_target_limits_within_target,
     rule_string_requires_maxchars,
     rule_array_requires_maxlen,
@@ -103,6 +104,7 @@ def validate_config(cfg: SecNodeConfig) -> list[Finding]:
     findings.extend(rule_accessible_members_by_type(cfg))                # R-ACC-002
     findings.extend(rule_numeric_ranges_coherent(cfg))                   # R-ACC-003
     findings.extend(rule_numeric_ranges_must_define_both_ends(cfg))      # R-ACC-003B
+    findings.extend(rule_int_type_requires_min_max(cfg))                 # R-ACC-003C
     findings.extend(rule_target_limits_within_target(cfg))               # R-ACC-004
     findings.extend(rule_string_requires_maxchars(cfg))                  # R-ACC-005
     findings.extend(rule_array_requires_maxlen(cfg))                     # R-ACC-006

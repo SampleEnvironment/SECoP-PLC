@@ -301,7 +301,6 @@ def _build_enum_xml(name: str, content: str, obj_id: str) -> str:
         f'<data name="{_NS_ATTRS}" handleUnknown="implementation">'
         f'<Attributes>'
         f'<Attribute Name="qualified_only" Value="" />'
-        f'<Attribute Name="strict" Value="" />'
         f'</Attributes>'
         f'</data>'
         f'{_iface_plaintext(content)}'

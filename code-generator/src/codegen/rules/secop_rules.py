@@ -672,6 +672,55 @@ def rule_numeric_ranges_must_define_both_ends(cfg: SecNodeConfig) -> list[Findin
     return findings
 
 
+def rule_int_type_requires_min_max(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-ACC-003C:
+    Accessibles with datainfo.type == "int" must define both min and max.
+
+    The SECoP specification requires IntRange to carry explicit min and max
+    bounds.  SECoP clients (e.g. frappy) reject structure reports that omit
+    these fields, which causes a connection-level error at runtime.
+
+    Only type "int" is checked here.  Type "double" (FloatRange) is not
+    checked because its bounds are optional in the SECoP spec.
+    """
+    findings: list[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        for acc_name, acc in (mod.accessibles or {}).items():
+            di = acc.datainfo
+            if (di.type or "").strip() != "int":
+                continue
+
+            if di.min is None:
+                findings.append(
+                    Finding(
+                        rule_id="R-ACC-003C",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.min",
+                        message=(
+                            f"{acc_name}.datainfo.type is 'int': "
+                            f"datainfo.min is required (SECoP IntRange must define both min and max)."
+                        ),
+                    )
+                )
+
+            if di.max is None:
+                findings.append(
+                    Finding(
+                        rule_id="R-ACC-003C",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.{acc_name}.datainfo.max",
+                        message=(
+                            f"{acc_name}.datainfo.type is 'int': "
+                            f"datainfo.max is required (SECoP IntRange must define both min and max)."
+                        ),
+                    )
+                )
+
+    return findings
+
+
 def rule_target_limits_within_target(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-ACC-004:

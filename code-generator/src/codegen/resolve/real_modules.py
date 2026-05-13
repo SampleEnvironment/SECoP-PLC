@@ -341,7 +341,13 @@ def _build_structure_report_json(cfg: dict[str, Any]) -> str:
     and must not include any project-specific 'x-plc' sections.
     """
     without_x_plc = _deep_remove_x_plc(cfg)
-    return json.dumps(without_x_plc, ensure_ascii=False, separators=(",", ":"))
+    # ensure_ascii=True converts non-ASCII characters (e.g. degree signs, special
+    # units like "ºC") to \uXXXX escape sequences.  The PLC stores the structure
+    # report in a STRING variable that uses Latin-1 internally; if a non-ASCII
+    # byte were embedded directly it would arrive at the SECoP client as an
+    # invalid UTF-8 sequence and cause a decode error.  Pure-ASCII JSON avoids
+    # this problem while remaining valid JSON that any client can read correctly.
+    return json.dumps(without_x_plc, ensure_ascii=True, separators=(",", ":"))
 
 # ---------------------------------------------------------------------------
 # Per-module resolver
