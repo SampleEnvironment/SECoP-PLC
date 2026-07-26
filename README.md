@@ -7,16 +7,16 @@ For detailed documentation, examples and guides, please refer to the Wiki.
 ## CODESYS library
 | | |
 |---|---|
-| **Version** | v1.0.0.0 |
+| **Version** | v1.1.0.0 |
 | **Source** | [project/](https://github.com/SampleEnvironment/SECoP-PLC/tree/master/project) |
 | **IDE** | CODESYS Development System 3.5 |
 | **Tested platforms** | Schneider Electric M251, M262 |
-| **Library dependencies** | JSON Utilities SL (optional) |
 | **Vendor-specific dependencies** | TcpUdpCommunication — required when using the Schneider Electric platform |
 
 ## Code generator
 | | |
 |---|---|
+| **Version** | v1.1.0 |
 | **Language** | Python 3.14 |
 | **Docker** | Supported |
 | **Dependencies** | [`pydantic >= 2.0`](https://github.com/SampleEnvironment/SECoP-PLC/blob/master/code-generator/requirements.txt) |
