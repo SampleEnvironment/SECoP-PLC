@@ -69,7 +69,10 @@ Grouping policy
 1) Group real modules into module classes when their SECoP structure is equal.
 2) Ignore x-plc entirely EXCEPT x-plc.value.outofrange_min/max, because those
    fields affect the generated class-level variable set.
-3) Pick a deterministic module-class name:
+3) Ignore module-level 'description', 'implementator' and 'implementation':
+   they are per-module metadata (assigned per instance at SECoP init) and do
+   not affect the generated class-level structure.
+4) Pick a deterministic module-class name:
    - if class has one module => class name is module name
    - if class has multiple modules => use the common-name heuristic, otherwise
      fallback to moduleclassN
@@ -128,10 +131,16 @@ def module_signature(module_dict: dict[str, Any]) -> dict[str, Any]:
     - remove full 'x-plc'
     - include only x-plc.value.outofrange_min/max under synthetic key
       '__xplc_outofrange__' if both are configured
+    - remove module-level 'description', 'implementator' and 'implementation':
+      per-module metadata must not split otherwise identical modules into
+      separate module classes
 
     This makes equality checks explicit and easy to reason about.
     """
     m = copy.deepcopy(module_dict)
+
+    for meta_key in ("description", "implementator", "implementation"):
+        m.pop(meta_key, None)
 
     out = None
     xplc = m.get("x-plc")
@@ -152,53 +161,103 @@ def module_signature(module_dict: dict[str, Any]) -> dict[str, Any]:
     return m
 
 
-def _longest_common_prefix(a: str, b: str) -> str:
-    i = 0
-    for ca, cb in zip(a, b):
-        if ca != cb:
-            break
-        i += 1
-    return a[:i]
+def _longest_common_substring(names: list[str]) -> str:
+    """
+    Return the longest substring present in every name.
+
+    Determinism on ties: among substrings of maximal length, the one that
+    appears first (leftmost) in the shortest name wins.
+
+    Module names are short strings and groups are small, so the simple
+    "try every substring of the shortest name, longest first" approach is
+    fast enough and easy to understand.
+    """
+    shortest = min(names, key=len)
+    n = len(shortest)
+
+    for length in range(n, 0, -1):
+        for start in range(0, n - length + 1):
+            candidate = shortest[start:start + length]
+            if all(candidate in name for name in names):
+                return candidate
+
+    return ""
 
 
-def _longest_common_suffix(a: str, b: str) -> str:
-    ra, rb = a[::-1], b[::-1]
-    pref = _longest_common_prefix(ra, rb)
-    return pref[::-1]
+def _starts_at_token_boundary(name: str, sub: str) -> bool:
+    """
+    True when the first occurrence of sub in name starts at the beginning of
+    a '_'/'-' separated token.
+    """
+    i = name.find(sub)
+    return i == 0 or name[i - 1] in "_-"
+
+
+def _ends_at_token_boundary(name: str, sub: str) -> bool:
+    """
+    True when the first occurrence of sub in name ends at the end of a
+    '_'/'-' separated token.
+    """
+    i = name.find(sub) + len(sub)
+    return i == len(name) or name[i] in "_-"
+
+
+def _trim_partial_edge_tokens(names: list[str], common: str) -> str:
+    """
+    Remove a leading or trailing token fragment from the common substring.
+
+    Example: for areactrl_barr_speed_sp + manual_barr_speed_sp_manual the
+    longest common substring is 'l_barr_speed_sp' — the stray 'l' comes from
+    the end of 'ctrl' and 'manual'. That fragment is dropped, giving
+    'barr_speed_sp'.
+
+    A fragment is only dropped when the remainder is still a usable name
+    (>= 2 chars). Otherwise the original text is kept, so that groups like
+    tc1 + tc2 still produce 'tc' even though '1'/'2' are not full tokens.
+    """
+    if common and not all(_starts_at_token_boundary(n, common) for n in names):
+        trimmed = common.split("_", 1)[1] if "_" in common else ""
+        trimmed = trimmed.strip("_-")
+        if len(trimmed) >= 2:
+            common = trimmed
+
+    if common and not all(_ends_at_token_boundary(n, common) for n in names):
+        trimmed = common.rsplit("_", 1)[0] if "_" in common else ""
+        trimmed = trimmed.strip("_-")
+        if len(trimmed) >= 2:
+            common = trimmed
+
+    return common
 
 
 def _common_name_heuristic(names: list[str]) -> Optional[str]:
     """
     Heuristic for naming a shared module class.
 
+    The class is named after the longest piece of text shared by ALL module
+    names in the group — prefix, suffix or middle part alike.
+
     Examples:
-      tempabcdef1x + temp567 -> "temp"  (common prefix)
-      abcdef1x + tempdef1x   -> "def1x" (common suffix)
-      abc + temp             -> None    (fallback to moduleclassN)
+      areactrl_barr_speed_sp + pressctrl_barr_speed_sp -> "barr_speed_sp"
+      tempabcdef1x + temp567                           -> "temp"
+      abc + temp                                       -> None (moduleclassN)
 
     Policy:
-    - if common prefix length >= 2 -> use it
-    - else if common suffix length >= 2 -> use it
-    - else return None
+    - strip '_' and '-' from the edges of the common part
+    - drop leading/trailing token fragments (see _trim_partial_edge_tokens)
+    - use the result when it has length >= 2
+    - otherwise return None (caller falls back to moduleclassN)
     """
     if not names:
         return None
     if len(names) == 1:
         return names[0]
 
-    cp = names[0]
-    cs = names[0]
-    for n in names[1:]:
-        cp = _longest_common_prefix(cp, n)
-        cs = _longest_common_suffix(cs, n)
+    common = _longest_common_substring(names).strip("_-")
+    common = _trim_partial_edge_tokens(names, common)
 
-    cp = cp.strip("_-")
-    cs = cs.strip("_-")
-
-    if len(cp) >= 2:
-        return cp
-    if len(cs) >= 2:
-        return cs
+    if len(common) >= 2:
+        return common
     return None
 
 

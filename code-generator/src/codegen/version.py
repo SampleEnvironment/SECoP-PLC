@@ -15,4 +15,4 @@ Versioning follows Semantic Versioning (SemVer): MAJOR.MINOR.PATCH
          that requires existing PLC projects to be updated.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

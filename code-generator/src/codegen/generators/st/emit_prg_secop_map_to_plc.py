@@ -340,9 +340,17 @@ def _emit_writable_apply_target_block(
     return lines
 
 
-def _emit_apply_clear_errors_block(module: ResolvedRealModule) -> list[str]:
+def _emit_apply_clear_errors_block(
+    module: ResolvedRealModule,
+    tasklist: TaskList,
+) -> list[str]:
     """
     Emit the hardware-side application of the clear_errors command.
+
+    cmd_stmt is optional: the generated code always clears the SECoP
+    ErrorReport. However, when the config declares x-plc.clear_errors but
+    leaves cmd_stmt empty, a task is added so the PLC developer decides
+    whether an extra hardware action is needed.
     """
     lines: list[str] = []
     pfx = _module_prefix(module.module_name)
@@ -359,6 +367,21 @@ def _emit_apply_clear_errors_block(module: ResolvedRealModule) -> list[str]:
     cmd_stmt = module.x_plc_clear_errors.cmd_stmt if module.x_plc_clear_errors else None
     if isinstance(cmd_stmt, str) and cmd_stmt.strip():
         lines.append(f" {cmd_stmt};")
+    elif module.x_plc_clear_errors is not None:
+        # x-plc.clear_errors was declared but cmd_stmt was left empty.
+        lines.append(
+            " "
+            + tasklist.make_st_comment(
+                plc_path=f"SecopMapToPlc.{module.module_name}.clear_errors",
+                message=(
+                    f"Missing PLC command statement for "
+                    f"{module.module_name}.clear_errors. The generator will "
+                    "clear SECoP ErrorReport only (by default). If you would "
+                    "like the command to perform an extra action, write it "
+                    "in cmd_stmt."
+                ),
+            )
+        )
 
     lines.append("END_IF")
     lines.append("")
@@ -382,7 +405,7 @@ def _emit_module_block(
 
     lines.extend(_emit_drivable_apply_target_block(module, resolved_classes, tasklist))
     lines.extend(_emit_writable_apply_target_block(module, resolved_classes, tasklist))
-    lines.extend(_emit_apply_clear_errors_block(module))
+    lines.extend(_emit_apply_clear_errors_block(module, tasklist))
 
     return lines
 

@@ -723,22 +723,57 @@ def rule_xplc_target_limit_expr_readonly_required(cfg: SecNodeConfig) -> list[Fi
 def rule_xplc_target_change_possible_expr_configured(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-026:
-    If x-plc.target exists, change_possible_expr should be configured.
+    Every module with a target accessible (Writable / Drivable, any target
+    type) should configure x-plc.target.change_possible_expr.
+
+    The warning also fires when the whole x-plc.target block is missing, so it
+    stays consistent with the tasklist generated later.
     """
     findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
-        xplc = mod.x_plc
-        if not xplc or xplc.target is None:
+        if not _target_type(mod):
             continue
 
-        if _is_empty(xplc.target.change_possible_expr):
+        xplc = mod.x_plc
+        t_cfg = xplc.target if xplc else None
+
+        if t_cfg is None or _is_empty(t_cfg.change_possible_expr):
             findings.append(
                 Finding(
                     rule_id="R-PLC-026",
                     severity=Severity.WARNING,
                     path=f"$.modules.{mod_name}.x-plc.target.change_possible_expr",
                     message=f"The field x-plc.target.change_possible_expr is not configured. {IMPLEMENTATION_WARNING_SUFFIX}",
+                )
+            )
+
+    return findings
+
+
+def rule_xplc_inactive_condition_not_empty(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-PLC-060:
+    x-plc.inactive_condition is fully optional. When it is absent the module is
+    always active and no finding is produced. But if the key is present and left
+    empty it is almost certainly a mistake, so a WARNING is raised (and the
+    generator emits a matching task marker).
+    """
+    findings: list[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        xplc = mod.x_plc
+        if not xplc:
+            continue
+
+        cond = xplc.inactive_condition
+        if cond is not None and _is_empty(cond):
+            findings.append(
+                Finding(
+                    rule_id="R-PLC-060",
+                    severity=Severity.WARNING,
+                    path=f"$.modules.{mod_name}.x-plc.inactive_condition",
+                    message=f"The field x-plc.inactive_condition is present but empty. {IMPLEMENTATION_WARNING_SUFFIX}",
                 )
             )
 
@@ -1196,29 +1231,36 @@ def rule_xplc_custom_parameters_exist_and_match_accessibles(cfg: SecNodeConfig) 
 def rule_xplc_custom_parameter_mapping_by_type(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-051 / R-PLC-052:
-    Validate each x-plc.custom_parameters.<name> mapping according to the
-    customised parameter datainfo.type.
+    Validate the x-plc.custom_parameters mapping of every customised parameter
+    (accessible whose name starts with '_', except commands) according to its
+    datainfo.type.
 
     Supported mapping policy:
     - numeric / string custom parameter -> read_expr
     - enum custom parameter             -> enum_tag
+
+    The missing-mapping WARNING also fires when the parameter has no entry
+    under x-plc.custom_parameters at all, so it stays consistent with the
+    tasklist generated later.
     """
     findings: list[Finding] = []
 
     for mod_name, mod in cfg.modules.items():
         xplc = mod.x_plc
-        if not xplc:
-            continue
+        cp_map = xplc.custom_parameters if xplc else {}
 
-        for cp_name, cp_cfg in xplc.custom_parameters.items():
-            acc = (mod.accessibles or {}).get(cp_name)
-            if acc is None:
+        for cp_name, acc in (mod.accessibles or {}).items():
+            if not cp_name.startswith("_"):
                 continue
 
             cp_type = (acc.datainfo.type or "").strip()
+            if cp_type == "command":
+                continue  # custom commands are not mapped via custom_parameters
 
-            has_read_expr = not _is_empty(cp_cfg.read_expr)
-            has_enum_tag = not _is_empty(cp_cfg.enum_tag)
+            cp_cfg = cp_map.get(cp_name)
+
+            has_read_expr = cp_cfg is not None and not _is_empty(cp_cfg.read_expr)
+            has_enum_tag = cp_cfg is not None and not _is_empty(cp_cfg.enum_tag)
 
             if _is_enum_type(cp_type):
                 if has_read_expr:

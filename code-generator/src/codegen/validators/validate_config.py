@@ -80,6 +80,7 @@ from codegen.rules.plc_rules import (
     rule_xplc_clear_errors_only_if_command_exists,
     rule_xplc_custom_parameters_exist_and_match_accessibles,
     rule_xplc_custom_parameter_mapping_by_type,
+    rule_xplc_inactive_condition_not_empty,
 )
 
 
@@ -142,6 +143,7 @@ def validate_config(cfg: SecNodeConfig) -> list[Finding]:
     findings.extend(rule_xplc_clear_errors_only_if_command_exists(cfg))          # R-PLC-041
     findings.extend(rule_xplc_custom_parameters_exist_and_match_accessibles(cfg))  # R-PLC-050
     findings.extend(rule_xplc_custom_parameter_mapping_by_type(cfg))             # R-PLC-051/052
+    findings.extend(rule_xplc_inactive_condition_not_empty(cfg))                 # R-PLC-060
 
     return findings
 

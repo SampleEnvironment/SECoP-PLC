@@ -209,6 +209,13 @@ class ResolvedRealModule:
     x_plc_target: ResolvedRealModuleTargetPlc | None = None
     x_plc_clear_errors: ResolvedRealModuleClearErrorsPlc | None = None
 
+    # Raw (unstripped) x-plc.inactive_condition, kept as-is so emitters can tell
+    # three cases apart:
+    #   None       -> field absent            -> module always active, emit nothing
+    #   "expr"     -> configured              -> emit the xInactive assignment
+    #   "" / "  "  -> present but empty       -> emit a task marker
+    inactive_condition_raw: str | None = None
+
 
 @dataclass(frozen=True)
 class ResolvedRealSecNode:
@@ -614,6 +621,10 @@ def _resolve_one_real_module(
         x_plc_status=resolved_x_status,
         x_plc_target=resolved_x_target,
         x_plc_clear_errors=resolved_x_clear,
+
+        # Kept raw on purpose (see field docstring): presence and emptiness both
+        # carry meaning for the SecopMapFromPlc emitter.
+        inactive_condition_raw=x_plc.get("inactive_condition"),
     )
 
 

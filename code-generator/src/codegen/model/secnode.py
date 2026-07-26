@@ -286,8 +286,15 @@ class PlcModuleConfig(StrictBaseModel):
     Customised parameter mappings:
     - custom_parameters: dictionary keyed by SECoP custom parameter name
       (for example "_sensor")
+
+    Optional deactivation:
+    - inactive_condition: PLC boolean expression. When it evaluates TRUE the
+      module reports "NoSuchModule" to SECoP clients, so the same PLC project can
+      expose different module sets depending on the equipment configuration.
+      Totally optional: absent means the module is always active.
     """
     timestamp_tag: Optional[str] = None
+    inactive_condition: Optional[str] = None
 
     value: Optional[PlcValueConfig] = None
     status: Optional[PlcStatusConfig] = None

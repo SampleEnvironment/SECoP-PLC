@@ -1,6 +1,6 @@
 {
   "equipment_id": "PLC SEC Node Demo",
-  "description": "PLC SEC Node Demo. Structure obtained from the Frappy demo server and then modified for PLC software development and testing purposes",
+  "description": "SEC Node structure obtained from the Frappy demo server and then modified /adapted to PLC for development and testing purposes",
   "firmware": "secnodeplc-1.0.0",
   "x-plc": {
     "tcp": {
@@ -8,7 +8,7 @@
       "server_port": 10767,
       "interface_healthy_tag": "G_stStatusPlc.G_xEthReady_If2"
     },
-    "secop_version": "V2019-09-16",
+    "secop_version": "V2.0",
     "plc_timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr"
   },
   "modules": {
@@ -76,13 +76,6 @@
           "datainfo": {
             "type": "command"
           }
-        },
-        "clear_errors": {
-          "description": "try to clear error state command",
-          "datainfo": {
-            "type": "command"
-          },
-          "readonly": false
         }
       },
       "x-plc": {
@@ -98,9 +91,6 @@
           "enum_tag": "G_iHeatSwitchCmd",
           "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled",
           "reach_timeout_s": 60
-        },
-        "clear_errors": {
-          "cmd_stmt": "IF G_xRemoteSecopEnabled AND NOT G_xEquipLockedInLocal THEN G_xDefaultAck := TRUE; END_IF"
         }
       }
     },
@@ -150,7 +140,7 @@
             "type": "double",
             "unit": "T",
             "min": -15.0,
-            "max": 14.0
+            "max": 15.0
           },
           "readonly": false
         },
@@ -158,19 +148,19 @@
           "description": "target range restriction - min allowed value",
           "datainfo": {
             "type": "double",
-            "min": -12.0,
-            "max": -10.0
+            "min": -15.0,
+            "max": 0.0
           },
-          "readonly": false
+          "readonly": true
         },
         "target_max": {
           "description": "target range restriction - max allowed value",
           "datainfo": {
             "type": "double",
-            "min": 10.0,
-            "max": 12.0
+            "min": 0.0,
+            "max": 15.0
           },
-          "readonly": false
+          "readonly": true
         },
         "pollinterval": {
           "description": "default poll interval",
@@ -200,8 +190,8 @@
         "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
         "value": {
           "read_expr": "REAL_TO_LREAL(G_rMf)",
-          "outofrange_min":-25,
-          "outofrange_max":25
+          "outofrange_min": -25,
+          "outofrange_max": 25
         },
         "status": {
           "disabled_expr": "G_xMfInMaintenance",
@@ -213,7 +203,9 @@
           "write_stmt": "G_rMfSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_mf.lrTarget)",
           "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled",
           "reach_timeout_s": 300,
-          "reach_abs_tolerance" : 0.1
+          "reach_abs_tolerance_expr": "REAL_TO_LREAL(G_rMfSetpointAbsTol)",
+          "limit_min_expr": "REAL_TO_LREAL(G_rMfSetpointLimitMin)",
+          "limit_max_expr": "REAL_TO_LREAL(G_rMfSetpointLimitMax)"
         },
         "clear_errors": {
           "cmd_stmt": "IF G_xRemoteSecopEnabled AND NOT G_xEquipLockedInLocal THEN G_xDefaultAck := TRUE; END_IF"
@@ -280,11 +272,11 @@
               {
                 "type": "double",
                 "min": 10.0,
-                "max": 300.0
+                "max": 100.0
               }
             ]
           },
-          "readonly": false
+          "readonly": true
         },
         "pollinterval": {
           "description": "default poll interval",
@@ -333,7 +325,9 @@
           "write_stmt": "G_rSampleChTempSetpoint := LREAL_TO_REAL(GVL_SecNode.G_st_ts.lrTarget)",
           "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled",
           "reach_timeout_s": 60,
-          "reach_abs_tolerance": 0.1
+          "reach_abs_tolerance_expr": "REAL_TO_LREAL(G_rSampleChTempSetpointAbsTol)",
+          "limit_min_expr": "REAL_TO_LREAL(G_rSampleChTempSetpointLimitMin)",
+          "limit_max_expr": "REAL_TO_LREAL(G_rSampleChTempSetpointLimitMax)"
         },
         "clear_errors": {
           "cmd_stmt": "IF G_xRemoteSecopEnabled AND NOT G_xEquipLockedInLocal THEN G_xDefaultAck := TRUE; END_IF"
@@ -391,13 +385,6 @@
           },
           "readonly": false
         },
-        "clear_errors": {
-          "description": "try to clear error state command",
-          "datainfo": {
-            "type": "command"
-          },
-          "readonly": false
-        },
         "_sensor": {
           "description": "Sensor number or calibration id",
           "datainfo": {
@@ -417,9 +404,6 @@
           "hw_error_description": "Coil temperature controller 1 - Sensor fault",
           "comm_error_expr": "G_xTc1CommsError",
           "comm_error_description": "Temperature controller 1 - Communication fault"
-        },
-        "clear_errors": {
-          "cmd_stmt": "IF G_xRemoteSecopEnabled AND NOT G_xEquipLockedInLocal THEN G_xDefaultAck := TRUE; END_IF"
         },
         "custom_parameters": {
           "_sensor": {
@@ -474,13 +458,6 @@
           },
           "readonly": false
         },
-        "clear_errors": {
-          "description": "try to clear error state command",
-          "datainfo": {
-            "type": "command"
-          },
-          "readonly": false
-        },
         "_sensor": {
           "description": "Sensor number or calibration id",
           "datainfo": {
@@ -500,9 +477,6 @@
           "hw_error_description": "Coil temperature controller 2 - Sensor fault",
           "comm_error_expr": "G_xTc2CommsError",
           "comm_error_description": "Temperature controller 2 - Communication fault"
-        },
-        "clear_errors": {
-          "cmd_stmt": "IF G_xRemoteSecopEnabled AND NOT G_xEquipLockedInLocal THEN G_xDefaultAck := TRUE; END_IF"
         },
         "custom_parameters": {
           "_sensor": {
@@ -563,7 +537,7 @@
             "min": 0.1,
             "max": 120.0
           },
-          "readonly": false
+          "readonly": true
         }
       },
       "x-plc": {
@@ -632,13 +606,6 @@
             "max": 120.0
           },
           "readonly": false
-        },
-        "clear_errors": {
-          "description": "try to clear error state command",
-          "datainfo": {
-            "type": "command"
-          },
-          "readonly": false
         }
       },
       "x-plc": {
@@ -655,9 +622,6 @@
         "target": {
           "write_stmt": "G_lrCurrentSpApplied :=  GVL_SecNode.G_st_currentsp.lrTarget",
           "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled"
-        },
-        "clear_errors": {
-          "cmd_stmt": "IF G_xRemoteSecopEnabled AND NOT G_xEquipLockedInLocal THEN G_xDefaultAck := TRUE; END_IF"
         }
       }
     }

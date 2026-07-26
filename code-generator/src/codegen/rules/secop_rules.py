@@ -967,6 +967,11 @@ def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> list[Finding]
     value.datainfo.maxchars, because both sides map to the same PLC STRING(n)
     variable and an inconsistent size would cause a silent truncation or compile
     error.
+
+    Additional check for enum type: target.datainfo.members must equal
+    value.datainfo.members (same names and same numeric values), because both
+    sides map to the same PLC enum type (ET_Module_<class>_value) and the
+    generator would silently ignore any different members configured on target.
     """
     findings: list[Finding] = []
 
@@ -1013,6 +1018,26 @@ def rule_target_datainfo_type_matches_value(cfg: SecNodeConfig) -> list[Finding]
                             f"value.datainfo.maxchars. "
                             f"value.maxchars={value_maxchars}, "
                             f"target.maxchars={target_maxchars}."
+                        ),
+                    )
+                )
+
+        # For enum types, members must also match — both sides map to the same
+        # PLC enum type, so different members on target would be silently
+        # ignored by the generator.
+        if value_type == "enum" and target_type == "enum":
+            value_members = value_di.members
+            target_members = target_di.members
+            if value_members != target_members:
+                findings.append(
+                    Finding(
+                        rule_id="R-ACC-008",
+                        severity=Severity.ERROR,
+                        path=f"$.modules.{mod_name}.accessibles.target.datainfo.members",
+                        message=(
+                            "target.datainfo.members must match "
+                            "value.datainfo.members (same names and same "
+                            "numeric values)."
                         ),
                     )
                 )

@@ -534,6 +534,48 @@ def _emit_target_drive_tolerance_mapping(
     return lines
 
 
+def _emit_inactive_condition(
+    module: ResolvedRealModule,
+    tasklist: TaskList,
+) -> list[str]:
+    """
+    Emit the optional module deactivation condition.
+
+    x-plc.inactive_condition is a PLC boolean expression. When configured, its
+    value is assigned to stStatus.xInactive every CPU cycle; the module FB then
+    replies "NoSuchModule" to clients while the condition holds.
+
+    Three cases (see ResolvedRealModule.inactive_condition_raw):
+    - absent           -> nothing is emitted (module always active)
+    - configured       -> assign the expression
+    - present but empty -> emit a task marker
+    """
+    raw = module.inactive_condition_raw
+    if raw is None:
+        return []
+
+    lines: list[str] = []
+    lines.append("// Inactive condition")
+
+    expr = raw.strip()
+    if expr:
+        lines.append(f"{_module_prefix(module.module_name)}.stStatus.xInactive := {expr};")
+    else:
+        lines.append(
+            tasklist.make_st_comment(
+                plc_path=f"SecopMapFromPlc.{module.module_name}.inactive_condition",
+                message=(
+                    f"Configure module deactivation condition for "
+                    f"{module.module_name} (x-plc.inactive_condition is present "
+                    "but empty)."
+                ),
+            )
+        )
+    lines.append("")
+
+    return lines
+
+
 def _emit_module_mapping(
     module: ResolvedRealModule,
     tasklist: TaskList,
@@ -547,6 +589,7 @@ def _emit_module_mapping(
     lines.append("// -----------------------------------------------------------------")
     lines.append("")
 
+    lines.extend(_emit_inactive_condition(module, tasklist))
     lines.extend(_emit_value_mapping(module, tasklist))
     lines.extend(_emit_target_change_interlock(module, tasklist))
     lines.extend(_emit_target_limits_plc_mapping(module, tasklist))

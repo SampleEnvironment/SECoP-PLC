@@ -945,7 +945,10 @@ def _emit_enum_change_target(resolved: ResolvedModuleClass) -> list[str]:
     members = list(resolved.value.members.items()) if resolved.value.members else []
 
     if members:
-        conds = [f"iTargetNewVal <> ET_Module_{resolved.name}_value.{name}" for name, _value in members]
+        conds = [
+            f"iTargetNewVal <> ET_Module_{resolved.name}_value.{sanitize_enum_member_name(name)}"
+            for name, _value in members
+        ]
         joined = " \n      AND ".join(conds)
         lines.append(f"     IF ({joined}) THEN // Target out of range")
     else:
@@ -959,10 +962,11 @@ def _emit_enum_change_target(resolved: ResolvedModuleClass) -> list[str]:
 
     lines.append("      CASE iTargetNewVal OF")
     for name, member_value in members:
+        st_name = sanitize_enum_member_name(name)
         if resolved.interface_class == "Drivable":
-            lines.append(f"       {member_value}: iq_etTargetChangeNewVal := ET_Module_{resolved.name}_value.{name};")
+            lines.append(f"       {member_value}: iq_etTargetChangeNewVal := ET_Module_{resolved.name}_value.{st_name};")
         else:
-            lines.append(f"       {member_value}: iq_etTarget := ET_Module_{resolved.name}_value.{name};")
+            lines.append(f"       {member_value}: iq_etTarget := ET_Module_{resolved.name}_value.{st_name};")
     lines.append("      END_CASE")
 
     if resolved.interface_class == "Drivable":
@@ -1394,6 +1398,23 @@ def emit_sync_block(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[s
     lines.append("IF i_xSyncModeRequest AND (i_sModuleRequested = iq_sName OR (StrIsNullOrEmptyA(ADR(i_sModuleRequested)) AND (i_sAction = 'activate' OR i_sAction = 'deactivate'))) THEN")
     lines.append(" ")
 
+    # Deactivate the module when not applicable to the current equipment
+    # configuration. xInactive is set each cycle by SecopMapFromPlc only for
+    # modules that configured x-plc.inactive_condition; it stays FALSE for all
+    # other modules, so the normal request handling in the ELSIF always runs.
+    # An inactive module returns "NoSuchModule" only when a client addresses it
+    # by name; on a broadcast activate/deactivate it is silently skipped (no
+    # error, no updates).
+    lines.append(" // Deactivate module when not applicable based on the equipment configuration")
+    lines.append(" IF iq_stStatus.xInactive AND i_sModuleRequested = iq_sName THEN")
+    lines.append("  // Return \"NoSuchModule\" error")
+    lines.append("  iq_stErrorReport.sClass := 'NoSuchModule';")
+    lines.append("  iq_stErrorReport.sDescription := iq_sName;")
+    lines.append("  StrConcatA(pstFrom:= ADR(' is not active on this SEC node'), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECoP.GPL.Gc_uiMaxSizeDescription));")
+    lines.append("  M_ReplyWithErrorStraightAway(i_xErrorLatched:= FALSE);")
+    lines.append(" ELSIF NOT iq_stStatus.xInactive THEN")
+    lines.append(" ")
+
     lines.extend(_emit_sync_activate(resolved, tasklist))
     lines.extend(_emit_sync_deactivate())
     lines.extend(_emit_sync_read(resolved, tasklist))
@@ -1401,6 +1422,7 @@ def emit_sync_block(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[s
     lines.extend(_emit_sync_do(resolved, tasklist))
 
     lines.append(" END_IF")  # closes IF i_sAction = 'activate' / ELSIF chain
+    lines.append(" END_IF")  # closes IF iq_stStatus.xInactive / ELSE
     lines.append("END_IF")  # closes IF i_xSyncModeRequest AND ...
     lines.append("")
 
@@ -1551,7 +1573,7 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
     lines.append("END_IF")
     lines.append("")
     lines.append("// Update subscribers")
-    lines.append("IF xUpdateAllSubscribers THEN")
+    lines.append("IF xUpdateAllSubscribers AND NOT iq_stStatus.xInactive THEN")
     lines.append(" M_CheckIfClientIsSubscribed(i_stClient:= i_stClientMonitored); // Set xClientIsSubscribed to TRUE if monitored client is on the subscriber list")
     lines.append(" IF xClientIsSubscribed THEN")
     lines.append("  ")
