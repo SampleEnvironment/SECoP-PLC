@@ -161,6 +161,12 @@ def main() -> int:
     # without repeatedly checking whether the directory already exists.
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Intermediate artefacts (traceability/debugging of the code generator
+    # itself) go to a sub-folder, so the root of out_dir only shows what the
+    # user needs: validation report, task list, ST and PLCopenXML.
+    internal_dir = out_dir / "internal"
+    internal_dir.mkdir(parents=True, exist_ok=True)
+
     # ------------------------------------------------------------------
     # 1) Load JSON input file -> raw dict
     # ------------------------------------------------------------------
@@ -185,7 +191,7 @@ def main() -> int:
     # - the original config provided by the user
     # - the normalised config after Pydantic validation
     # - the resolved models used for code generation
-    (out_dir / "raw_config.json").write_text(
+    (internal_dir / "raw_config.json").write_text(
         json.dumps(raw, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -202,7 +208,7 @@ def main() -> int:
 
     # Store the normalised config so that downstream debugging always has a
     # stable and explicit view of what the schema accepted.
-    (out_dir / "normalized_config.json").write_text(
+    (internal_dir / "normalized_config.json").write_text(
         cfg.model_dump_json(indent=2, by_alias=True),
         encoding="utf-8",
     )
@@ -245,13 +251,13 @@ def main() -> int:
         print(e)
         return 2
 
-    (out_dir / "resolved_module_classes.json").write_text(
+    (internal_dir / "resolved_module_classes.json").write_text(
         json.dumps(resolved.to_dict(), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
     print("Resolved module classes.")
-    print("wrote:", str(out_dir / "resolved_module_classes.json"))
+    print("wrote:", str(internal_dir / "resolved_module_classes.json"))
 
     # ------------------------------------------------------------------
     # 5) Resolve real modules
@@ -273,13 +279,13 @@ def main() -> int:
         print(e)
         return 2
 
-    (out_dir / "resolved_real_modules.json").write_text(
+    (internal_dir / "resolved_real_modules.json").write_text(
         json.dumps(resolved_real_modules.to_dict(), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
     print("Resolved real modules.")
-    print("wrote:", str(out_dir / "resolved_real_modules.json"))
+    print("wrote:", str(internal_dir / "resolved_real_modules.json"))
 
     # ------------------------------------------------------------------
     # 6) Generate PLC Structured Text artefacts
@@ -290,7 +296,7 @@ def main() -> int:
 
     # Emit the core ST artefacts that are always present in the generated
     # PLC SECoP node project.
-    st_gvl = emit_gvl_secnode(resolved)
+    st_gvl = emit_gvl_secnode(resolved, resolved_real_modules)
     st_fb_process_modules = emit_fb_process_modules(resolved, tasklist)
     st_secop_init = emit_prg_secop_init(resolved_real_modules, tasklist)
     st_secop_map_from_plc = emit_prg_secop_map_from_plc(

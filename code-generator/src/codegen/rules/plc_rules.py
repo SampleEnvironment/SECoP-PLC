@@ -229,16 +229,6 @@ def rule_xplc_node_fields_configured(cfg: SecNodeConfig) -> list[Finding]:
             )
         )
 
-    if _is_empty(xplc.secop_version):
-        findings.append(
-            Finding(
-                rule_id="R-PLC-010",
-                severity=Severity.WARNING,
-                path="$.x-plc.secop_version",
-                message=f"The field x-plc.secop_version is not configured. {IMPLEMENTATION_WARNING_SUFFIX}",
-            )
-        )
-
     if _is_empty(xplc.plc_timestamp_tag):
         findings.append(
             Finding(
@@ -751,11 +741,11 @@ def rule_xplc_target_change_possible_expr_configured(cfg: SecNodeConfig) -> list
     return findings
 
 
-def rule_xplc_inactive_condition_not_empty(cfg: SecNodeConfig) -> list[Finding]:
+def rule_xplc_exclude_condition_not_empty(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-060:
-    x-plc.inactive_condition is fully optional. When it is absent the module is
-    always active and no finding is produced. But if the key is present and left
+    x-plc.exclude_condition is fully optional. When it is absent the module is
+    always included and no finding is produced. But if the key is present and left
     empty it is almost certainly a mistake, so a WARNING is raised (and the
     generator emits a matching task marker).
     """
@@ -766,14 +756,14 @@ def rule_xplc_inactive_condition_not_empty(cfg: SecNodeConfig) -> list[Finding]:
         if not xplc:
             continue
 
-        cond = xplc.inactive_condition
+        cond = xplc.exclude_condition
         if cond is not None and _is_empty(cond):
             findings.append(
                 Finding(
                     rule_id="R-PLC-060",
                     severity=Severity.WARNING,
-                    path=f"$.modules.{mod_name}.x-plc.inactive_condition",
-                    message=f"The field x-plc.inactive_condition is present but empty. {IMPLEMENTATION_WARNING_SUFFIX}",
+                    path=f"$.modules.{mod_name}.x-plc.exclude_condition",
+                    message=f"The field x-plc.exclude_condition is present but empty. {IMPLEMENTATION_WARNING_SUFFIX}",
                 )
             )
 
@@ -986,6 +976,37 @@ def rule_xplc_value_outofrange_numeric_only(cfg: SecNodeConfig) -> list[Finding]
                         "Invalid x-plc.value out-of-range configuration: the "
                         "out-of-range feature requires both outofrange_min and "
                         "outofrange_max to be set."
+                    ),
+                )
+            )
+
+    return findings
+
+
+def rule_xplc_value_handle_nan_double_only(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-PLC-036:
+    x-plc.value.handle_nan is optional, but only allowed for SECoP value type
+    'double' (LREAL). Integer types (int, scaled) can not be NaN.
+    An ERROR is raised for any other value type.
+    """
+    findings: list[Finding] = []
+
+    for mod_name, mod in cfg.modules.items():
+        xplc = mod.x_plc
+        if not xplc or xplc.value is None or not xplc.value.handle_nan:
+            continue
+
+        v_type = _value_type(mod)
+        if v_type != "double":
+            findings.append(
+                Finding(
+                    rule_id="R-PLC-036",
+                    severity=Severity.ERROR,
+                    path=f"$.modules.{mod_name}.x-plc.value.handle_nan",
+                    message=(
+                        "x-plc.value.handle_nan is only allowed for SECoP value "
+                        f"type 'double' (value type is '{v_type}')."
                     ),
                 )
             )
@@ -1316,5 +1337,68 @@ def rule_xplc_custom_parameter_mapping_by_type(cfg: SecNodeConfig) -> list[Findi
                             ),
                         )
                     )
+
+    return findings
+
+def _enum_members_not_bool(datainfo: Any) -> Optional[list[str]]:
+    """
+    Return the enum members whose value is not 0 or 1, or None when the
+    datainfo is not an enum with a members dict.
+    """
+    if (getattr(datainfo, "type", None) or "").strip() != "enum":
+        return None
+    members = getattr(datainfo, "members", None)
+    if not isinstance(members, dict):
+        return None
+    return [f"{k}={v}" for k, v in members.items() if v not in (0, 1) or isinstance(v, bool)]
+
+
+def rule_xplc_enum_tag_is_bool_members(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-PLC-035 / R-PLC-053:
+    When x-plc.value / x-plc.target / x-plc.custom_parameters.<p> sets
+    enum_tag_is_bool to TRUE, the enum_tag is a BOOL PLC tag and the generated
+    code converts it with BOOL_TO_INT() / INT_TO_BOOL(). The SECoP enum members
+    must then only use the values 0 and 1, otherwise information is lost.
+    An ERROR is raised for any other member value.
+    """
+    findings: list[Finding] = []
+
+    def check(flag: Optional[bool], datainfo: Any, path: str, rule_id: str) -> None:
+        if not flag:
+            return
+        bad = _enum_members_not_bool(datainfo)
+        if bad:
+            findings.append(
+                Finding(
+                    rule_id=rule_id,
+                    severity=Severity.ERROR,
+                    path=path,
+                    message=(
+                        "enum_tag_is_bool is TRUE, so the enum members must only "
+                        f"use the values 0 and 1. Invalid members: {', '.join(bad)}."
+                    ),
+                )
+            )
+
+    for mod_name, mod in cfg.modules.items():
+        xplc = mod.x_plc
+        if not xplc:
+            continue
+        accs = mod.accessibles or {}
+
+        if xplc.value and "value" in accs:
+            check(xplc.value.enum_tag_is_bool, accs["value"].datainfo,
+                  f"$.modules.{mod_name}.x-plc.value.enum_tag_is_bool", "R-PLC-035")
+
+        if xplc.target and "target" in accs:
+            check(xplc.target.enum_tag_is_bool, accs["target"].datainfo,
+                  f"$.modules.{mod_name}.x-plc.target.enum_tag_is_bool", "R-PLC-035")
+
+        for cp_name, cp_cfg in (xplc.custom_parameters or {}).items():
+            if cp_cfg and cp_name in accs:
+                check(cp_cfg.enum_tag_is_bool, accs[cp_name].datainfo,
+                      f"$.modules.{mod_name}.x-plc.custom_parameters.{cp_name}.enum_tag_is_bool",
+                      "R-PLC-053")
 
     return findings

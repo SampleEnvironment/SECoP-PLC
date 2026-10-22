@@ -36,3 +36,15 @@ def sanitize_enum_member_name(name: str) -> str:
     if sanitized and sanitized[0].isdigit():
         sanitized = "_" + sanitized
     return sanitized or "_unknown"
+
+
+def format_st_string_literal(value: str) -> str:
+    """
+    Format a Python string as an IEC 61131-3 ST string literal.
+
+    Escaping rules (IEC 61131-3):
+    - '$' -> '$$' (escaped first, so the '$' of the next rule is kept)
+    - "'" -> "$'"
+    """
+    escaped = value.replace("$", "$$").replace("'", "$'")
+    return f"'{escaped}'"

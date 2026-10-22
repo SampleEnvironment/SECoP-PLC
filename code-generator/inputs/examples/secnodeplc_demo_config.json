@@ -8,7 +8,6 @@
       "server_port": 10767,
       "interface_healthy_tag": "G_stStatusPlc.G_xEthReady_If2"
     },
-    "secop_version": "V2.0",
     "plc_timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr"
   },
   "modules": {
@@ -81,14 +80,16 @@
       "x-plc": {
         "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
         "value": {
-          "enum_tag": "G_iHeatSwitchStatus"
+          "enum_tag": "G_xHeatSwitchStatus",
+          "enum_tag_is_bool": true
         },
         "status": {
           "hw_error_expr": "G_xHeatSwitchHwError",
           "hw_error_description": "Cryomagnet heatswitch fault"
         },
         "target": {
-          "enum_tag": "G_iHeatSwitchCmd",
+          "enum_tag": "G_xHeatSwitchCmd",
+          "enum_tag_is_bool": true,
           "change_possible_expr": "NOT G_xEquipLockedInLocal AND G_xRemoteSecopEnabled",
           "reach_timeout_s": 60
         }
@@ -100,7 +101,7 @@
       ],
       "features": [],
       "description": "simulates some cryomagnet with persistent/non-persistent switching",
-      "implementator": "ggithub.com/SampleEnvironment/SECoP-PLC/",
+      "implementator": "github.com/SampleEnvironment/SECoP-PLC/",
       "accessibles": {
         "value": {
           "description": "current field in T",
@@ -190,6 +191,7 @@
         "timestamp_tag": "G_stStatusPlc.sSecSinceJan1970Hr",
         "value": {
           "read_expr": "REAL_TO_LREAL(G_rMf)",
+          "handle_nan": true,
           "outofrange_min": -25,
           "outofrange_max": 25
         },
@@ -490,7 +492,7 @@
         "Writable"
       ],
       "features": [],
-      "description": "some label indicating the state of the magnet `mf`.",
+      "description": "some label indicating the state of the magnet 'mf'.",
       "implementator": "github.com/SampleEnvironment/SECoP-PLC/",
       "accessibles": {
         "value": {

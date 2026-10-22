@@ -57,11 +57,12 @@ def _pascal_case_module_name(modname: str) -> str:
 
 def _emit_common_interface_block() -> list[str]:
     """
-    Emit the common interface declaration shared by:
-    - FUNCTION_BLOCK FB_SecopProcessModules
-    - METHOD Run
+    Emit the interface declaration of METHOD Run (must match
+    SECOP.I_ProcessModules.Run exactly).
 
-    This avoids duplicating the same VAR_INPUT / VAR_IN_OUT block twice.
+    Since library v1.2.0.0 it is emitted only for METHOD Run. The FB itself
+    is never called directly (only through the interface), so FB-level
+    inputs would just waste instance memory (i_sData alone is several KB).
 
     Important:
     - variable names must match the SECOP library interface
@@ -70,30 +71,30 @@ def _emit_common_interface_block() -> list[str]:
     lines: list[str] = []
 
     lines.append("VAR_INPUT")
-    lines.append(" // Action")
+    lines.append(" /// Action identifier (type of request: activate, read, change...)")
     lines.append(" i_sAction: STRING;")
-    lines.append(" // Module requested")
+    lines.append(" /// Module requested")
     lines.append(" i_sModuleRequested: STRING(SECOP.GCL.Gc_uiMaxSizeIdentifier);")
-    lines.append(" // Accessible (parameter, property or command)")
+    lines.append(" /// Accessible (parameter, property or command)")
     lines.append(" i_sAccessibleName: STRING(SECOP.GCL.Gc_uiMaxSizeIdentifier);")
-    lines.append(" // Data")
-    lines.append(" i_sData: STRING(SECOP.GPL.Gc_uiMaxSizeMessage);")
-    lines.append(" // Monitored client")
+    lines.append(" /// Data")
+    lines.append(" i_sData: STRING(SECOP.GPL.Gc_uiMaxSizeData);")
+    lines.append(" /// Monitored client")
     lines.append(" i_stClientMonitored: SECOP.ST_Subscriber;")
-    lines.append(" // Disconnected client")
+    lines.append(" /// Disconnected client")
     lines.append(" i_stClientDisconnected: SECOP.ST_Subscriber;")
-    lines.append(" // (Flag) 'i_stClientDisconnected' just disconnected")
+    lines.append(" /// (Flag) 'i_stClientDisconnected' just disconnected")
     lines.append(" i_xClientDisconnectedFlag: BOOL;")
-    lines.append(" // (Flag) 'i_stClientMonitored' sent a new request that needs processing")
+    lines.append(" /// (Flag) 'i_stClientMonitored' sent a new request that needs processing")
     lines.append(" i_xSyncModeRequest: BOOL;")
-    lines.append(" // (Flag) 'i_stClientMonitored' is the first in server's list")
+    lines.append(" /// (Flag) 'i_stClientMonitored' is the first in server's list")
     lines.append(" i_xFirstSecopClient: BOOL;")
-    lines.append(" // (Flag) all clients in server's list were processed")
+    lines.append(" /// (Flag) All clients in server's list were processed")
     lines.append(" i_xAllSecopClientsDone: BOOL;")
     lines.append("END_VAR")
 
     lines.append("VAR_IN_OUT")
-    lines.append(" // Reply message")
+    lines.append(" /// Reply message")
     lines.append(" iq_sReplyMessage: STRING(SECOP.GPL.Gc_uiMaxSizeMessage);")
     lines.append("END_VAR")
 
@@ -106,7 +107,6 @@ def _emit_fb_header() -> list[str]:
     """
     lines: list[str] = []
     lines.append("FUNCTION_BLOCK FB_SecopProcessModules IMPLEMENTS SECOP.I_ProcessModules")
-    lines.extend(_emit_common_interface_block())
     return lines
 
 
@@ -154,6 +154,7 @@ def _emit_common_readable_mappings(modname: str) -> list[str]:
         f"    iq_stStatus              := GVL_SecNode.G_st_{modname}.stStatus,",
         f"    iq_stPollInterval        := GVL_SecNode.G_st_{modname}.stPollInterval,",
         f"    iq_astSubscriberList     := GVL_SecNode.G_st_{modname}.astSubscriberList,",
+        f"    i_xExcluded              := GVL_SecNode.G_st_{modname}.xExcluded,",
         "",
     ]
 

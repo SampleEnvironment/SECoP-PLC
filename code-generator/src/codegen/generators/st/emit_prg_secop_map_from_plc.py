@@ -32,6 +32,7 @@ from codegen.resolve.real_modules import (
 )
 from codegen.resolve.types import ResolvedCustomParameter
 from codegen.tasklist import TaskList
+from codegen.generators.st.st_utils import format_st_string_literal
 
 
 def _module_prefix(module_name: str) -> str:
@@ -41,15 +42,25 @@ def _module_prefix(module_name: str) -> str:
     return f"GVL_SecNode.G_st_{module_name}"
 
 
-def _emit_program_header() -> list[str]:
+def _emit_program_header(resolved: ResolvedRealModules) -> list[str]:
     """
     Emit the PROGRAM header and internal initialisation flag.
+
+    When the structure report is dynamic (modules with x-plc.exclude_condition),
+    the variables used to rebuild it are declared too.
     """
     lines: list[str] = []
 
     lines.append("PROGRAM SecopMapFromPlc")
     lines.append("VAR")
     lines.append(" xSecopInitDone: BOOL := FALSE;")
+    if resolved.sec_node.structure_report_dynamic:
+        n = len(_excludable_modules(resolved))
+        lines.append(" // Dynamic SEC node structure report")
+        lines.append(" xStructReportRebuild: BOOL := TRUE; // Rebuild request (TRUE: build on first cycle)")
+        lines.append(" xStructReportBuilt: BOOL := FALSE; // Structure report built at least once")
+        lines.append(f" axExcludedPrev: ARRAY[1..{n}] OF BOOL; // Previous xExcluded flags of the excludable modules")
+        lines.append(" sStructReportSep: STRING(1); // Separator between modules")
     lines.append("END_VAR")
     lines.append("")
 
@@ -136,7 +147,9 @@ def _emit_value_mapping(
     Supported patterns:
     - numeric / string value -> x-plc.value.read_expr
     - enum value             -> x-plc.value.enum_tag (direct assignment; range
-                                checking is handled in FB_Module_* at runtime)
+                                checking is handled in FB_Module_* at runtime).
+                                BOOL_TO_INT(enum_tag) when
+                                x-plc.value.enum_tag_is_bool is TRUE
     """
     lines: list[str] = []
     pfx = _module_prefix(module.module_name)
@@ -164,7 +177,10 @@ def _emit_value_mapping(
         enum_tag = module.x_plc_value.enum_tag if module.x_plc_value else None
 
         if enum_tag:
-            lines.append(f"{pfx}.etValue := {enum_tag};")
+            if module.x_plc_value.enum_tag_is_bool:
+                lines.append(f"{pfx}.etValue := BOOL_TO_INT({enum_tag});")
+            else:
+                lines.append(f"{pfx}.etValue := {enum_tag};")
         else:
             lines.append(
                 tasklist.make_st_comment(
@@ -271,11 +287,12 @@ def _emit_status_block(module: ResolvedRealModule) -> list[str]:
     """
     Emit the status-and-error evaluation block.
 
-    Priority order:
+    Priority order (SECoP does not define one; only one status can be shown):
     1) Disabled
     2) Communication error
     3) Hardware error
-    4) Normal state logic
+    4) Value is NaN (x-plc.value.handle_nan)
+    5) Normal state logic
     """
     lines: list[str] = []
     pfx = _module_prefix(module.module_name)
@@ -291,28 +308,40 @@ def _emit_status_block(module: ResolvedRealModule) -> list[str]:
         lines.append(f" {pfx}.stStatus.etCode := SECOP.ET_StatusCode.Disabled;")
         lines.append(f" {pfx}.stStatus.sDescription := 'DISABLED';")
         lines.append(f" {pfx}.stErrorReport.xActive := TRUE;")
-        lines.append(f" {pfx}.stErrorReport.sClass := 'DISABLED';")
-        lines.append(f" {pfx}.stErrorReport.sDescription := '{disabled_desc}';")
+        lines.append(f" {pfx}.stErrorReport.sClass := 'Disabled';") # SECoP error class (not the status enum name)
+        lines.append(f" {pfx}.stErrorReport.sDescription := {format_st_string_literal(disabled_desc)};")
         branches_started += 1
 
     if module.status_has_comm_error and module.x_plc_status:
         kw = "ELSIF" if branches_started else "IF"
         lines.append(f"{kw} {module.x_plc_status.comm_error_expr} THEN")
         lines.append(f" {pfx}.stStatus.etCode := SECOP.ET_StatusCode.Error;")
-        lines.append(f" {pfx}.stStatus.sDescription := '{module.x_plc_status.comm_error_description}';")
+        lines.append(f" {pfx}.stStatus.sDescription := {format_st_string_literal(module.x_plc_status.comm_error_description)};")
         lines.append(f" {pfx}.stErrorReport.xActive := TRUE;")
         lines.append(f" {pfx}.stErrorReport.sClass := 'CommunicationFailed';")
-        lines.append(f" {pfx}.stErrorReport.sDescription := '{module.x_plc_status.comm_error_description}';")
+        lines.append(f" {pfx}.stErrorReport.sDescription := {format_st_string_literal(module.x_plc_status.comm_error_description)};")
         branches_started += 1
 
     if module.status_has_hw_error and module.x_plc_status:
         kw = "ELSIF" if branches_started else "IF"
         lines.append(f"{kw} {module.x_plc_status.hw_error_expr} THEN")
         lines.append(f" {pfx}.stStatus.etCode := SECOP.ET_StatusCode.Error;")
-        lines.append(f" {pfx}.stStatus.sDescription := '{module.x_plc_status.hw_error_description}';")
+        lines.append(f" {pfx}.stStatus.sDescription := {format_st_string_literal(module.x_plc_status.hw_error_description)};")
         lines.append(f" {pfx}.stErrorReport.xActive := TRUE;")
         lines.append(f" {pfx}.stErrorReport.sClass := 'HardwareError';")
-        lines.append(f" {pfx}.stErrorReport.sDescription := '{module.x_plc_status.hw_error_description}';")
+        lines.append(f" {pfx}.stErrorReport.sDescription := {format_st_string_literal(module.x_plc_status.hw_error_description)};")
+        branches_started += 1
+
+    if module.x_plc_value and module.x_plc_value.handle_nan:
+        # NaN is the only value not equal to itself. JSON can not carry NaN,
+        # so an error report is sent instead of the value.
+        kw = "ELSIF" if branches_started else "IF"
+        lines.append(f"{kw} {pfx}.lrValue <> {pfx}.lrValue THEN // NaN")
+        lines.append(f" {pfx}.stStatus.etCode := SECOP.ET_StatusCode.Error;")
+        lines.append(f" {pfx}.stStatus.sDescription := 'Value is NaN';")
+        lines.append(f" {pfx}.stErrorReport.xActive := TRUE;")
+        lines.append(f" {pfx}.stErrorReport.sClass := 'ReadFailed';")
+        lines.append(f" {pfx}.stErrorReport.sDescription := 'Value is NaN';")
         branches_started += 1
 
     if module.interface_class == "Drivable":
@@ -380,7 +409,10 @@ def _emit_one_custom_parameter_mapping(
         enum_tag = cp_plc.enum_tag if cp_plc else None
 
         if enum_tag:
-            lines.append(f"{lhs} := {enum_tag};")
+            if cp_plc.enum_tag_is_bool:
+                lines.append(f"{lhs} := BOOL_TO_INT({enum_tag});")
+            else:
+                lines.append(f"{lhs} := {enum_tag};")
         else:
             lines.append(
                 tasklist.make_st_comment(
@@ -514,7 +546,7 @@ def _emit_target_drive_tolerance_mapping(
     pfx = _module_prefix(module.module_name)
     vp  = module.value_var_prefix
 
-    lines.append("// Target reach absolute tolerance")
+    lines.append("// Target drive - absolute tolerance to consider target reached")
     expr = module.x_plc_target.reach_abs_tolerance_expr if module.x_plc_target else None
     if expr:
         lines.append(f"{pfx}.{vp}TargetDriveTolerance := {expr};")
@@ -534,43 +566,132 @@ def _emit_target_drive_tolerance_mapping(
     return lines
 
 
-def _emit_inactive_condition(
+def _emit_exclude_condition(
     module: ResolvedRealModule,
     tasklist: TaskList,
 ) -> list[str]:
     """
-    Emit the optional module deactivation condition.
+    Emit the optional module exclusion condition.
 
-    x-plc.inactive_condition is a PLC boolean expression. When configured, its
-    value is assigned to stStatus.xInactive every CPU cycle; the module FB then
-    replies "NoSuchModule" to clients while the condition holds.
+    x-plc.exclude_condition is a PLC boolean expression. When configured, its
+    value is assigned to xExcluded every CPU cycle; while it holds, the module
+    is left out of the SEC node structure report and the module FB replies
+    "NoSuchModule" to clients.
 
-    Three cases (see ResolvedRealModule.inactive_condition_raw):
-    - absent           -> nothing is emitted (module always active)
+    Three cases (see ResolvedRealModule.exclude_condition_raw):
+    - absent           -> nothing is emitted (module always included)
     - configured       -> assign the expression
     - present but empty -> emit a task marker
     """
-    raw = module.inactive_condition_raw
+    raw = module.exclude_condition_raw
     if raw is None:
         return []
 
     lines: list[str] = []
-    lines.append("// Inactive condition")
+    lines.append("// Exclude condition")
 
     expr = raw.strip()
     if expr:
-        lines.append(f"{_module_prefix(module.module_name)}.stStatus.xInactive := {expr};")
+        lines.append(f"{_module_prefix(module.module_name)}.xExcluded := {expr};")
     else:
         lines.append(
             tasklist.make_st_comment(
-                plc_path=f"SecopMapFromPlc.{module.module_name}.inactive_condition",
+                plc_path=f"SecopMapFromPlc.{module.module_name}.exclude_condition",
                 message=(
-                    f"Configure module deactivation condition for "
-                    f"{module.module_name} (x-plc.inactive_condition is present "
+                    f"Configure module exclusion condition for "
+                    f"{module.module_name} (x-plc.exclude_condition is present "
                     "but empty)."
                 ),
             )
         )
+    lines.append("")
+
+    return lines
+
+
+def _excludable_modules(resolved: ResolvedRealModules) -> list[str]:
+    """
+    Modules (in config order) that have the x-plc.exclude_condition key.
+    """
+    return [
+        name
+        for name in resolved.sec_node.module_names_in_order
+        if resolved.modules[name].exclude_condition_raw is not None
+    ]
+
+
+def _emit_structure_report_rebuild(resolved: ResolvedRealModules) -> list[str]:
+    """
+    Emit the dynamic SEC node structure report block.
+
+    Only emitted when at least one module has x-plc.exclude_condition. The
+    structure report is rebuilt from the constants in GVL_SecNode
+    (Gc_sStructReportHead, Gc_sStructReport_<module>, Gc_sStructReportTail),
+    including only the non-excluded modules:
+    - on the first cycle;
+    - whenever the xExcluded flag of any excludable module changes. In that case
+      all SECoP clients are also disconnected, so that they get the new
+      structure report (describe) on reconnection.
+
+    It is placed at the end of SecopMapFromPlc, after all xExcluded flags have
+    been updated.
+    """
+    sec_node = resolved.sec_node
+    if not sec_node.structure_report_dynamic:
+        return []
+
+    excludable = _excludable_modules(resolved)
+    report = "SECOP.GVL.G_st_SecNode.sStructureReport"
+    concat_tail = (
+        f"pstTo:= ADR({report}), "
+        "iBufferSize:= UINT_TO_INT(SECOP.GPL.Gc_uiMaxSizeMessage));"
+    )
+
+    lines: list[str] = []
+    lines.append("// SEC node structure report")
+    lines.append("// -----------------------------------------------------------------")
+    lines.append("")
+    lines.append("// Detect equipment configuration changes (excluded modules)")
+    for idx, name in enumerate(excludable, start=1):
+        lines.append(
+            f"IF {_module_prefix(name)}.xExcluded <> axExcludedPrev[{idx}] THEN "
+            "xStructReportRebuild := TRUE; END_IF"
+        )
+    lines.append("")
+    lines.append("// Rebuild the structure report with the non-excluded modules")
+    lines.append("IF xStructReportRebuild THEN")
+    lines.append(" xStructReportRebuild := FALSE;")
+    lines.append("")
+    lines.append(" // Disconnect all clients (except on first build) so they get the new structure on reconnection")
+    lines.append(" IF xStructReportBuilt THEN")
+    lines.append("  SECOP.Server.xCmdDisconnectAll := TRUE;")
+    lines.append(" END_IF")
+    lines.append(" xStructReportBuilt := TRUE;")
+    lines.append("")
+    lines.append(" // Store current exclusion flags")
+    for idx, name in enumerate(excludable, start=1):
+        lines.append(f" axExcludedPrev[{idx}] := {_module_prefix(name)}.xExcluded;")
+    lines.append("")
+    lines.append(" // Head (SEC node properties)")
+    lines.append(f" {report} := GVL_SecNode.Gc_sStructReportHead;")
+    lines.append(" sStructReportSep := '';")
+    lines.append("")
+    lines.append(" // Modules")
+    for name in sec_node.module_names_in_order:
+        if name in excludable:
+            lines.append(f" IF NOT {_module_prefix(name)}.xExcluded THEN")
+            ind = "  "
+        else:
+            ind = " "
+        lines.append(f"{ind}StrConcatA(pstFrom:= ADR(sStructReportSep), {concat_tail}")
+        lines.append(f"{ind}StrConcatA(pstFrom:= ADR(GVL_SecNode.Gc_sStructReport_{name}), {concat_tail}")
+        lines.append(f"{ind}sStructReportSep := ',';")
+        if name in excludable:
+            lines.append(" END_IF")
+    lines.append("")
+    lines.append(" // Tail")
+    lines.append(f" StrConcatA(pstFrom:= ADR(GVL_SecNode.Gc_sStructReportTail), {concat_tail}")
+    lines.append("END_IF")
     lines.append("")
 
     return lines
@@ -589,7 +710,7 @@ def _emit_module_mapping(
     lines.append("// -----------------------------------------------------------------")
     lines.append("")
 
-    lines.extend(_emit_inactive_condition(module, tasklist))
+    lines.extend(_emit_exclude_condition(module, tasklist))
     lines.extend(_emit_value_mapping(module, tasklist))
     lines.extend(_emit_target_change_interlock(module, tasklist))
     lines.extend(_emit_target_limits_plc_mapping(module, tasklist))
@@ -611,7 +732,7 @@ def emit_prg_secop_map_from_plc(
     """
     lines: list[str] = []
 
-    lines.extend(_emit_program_header())
+    lines.extend(_emit_program_header(resolved_real_modules))
     lines.extend(_emit_call_secop_init())
     lines.extend(_emit_sec_node_mapping(resolved_real_modules, tasklist))
 
@@ -622,5 +743,7 @@ def emit_prg_secop_map_from_plc(
                 tasklist,
             )
         )
+
+    lines.extend(_emit_structure_report_rebuild(resolved_real_modules))
 
     return "\n".join(lines) + "\n"

@@ -73,7 +73,6 @@ class PlcNodeConfig(StrictBaseModel):
       independently when needed.
     """
     tcp: Optional[PlcTcpConfig] = None
-    secop_version: Optional[str] = None
     plc_timestamp_tag: Optional[str] = None
 
 
@@ -158,11 +157,29 @@ class PlcValueConfig(StrictBaseModel):
           "enum_tag": "G_iHeatSwitchStatus"
         }
 
+    - enum values mapped to a BOOL PLC tag (enum members must be 0 and/or 1):
+        {
+          "enum_tag": "G_xHeatSwitchOn",
+          "enum_tag_is_bool": true
+        }
+
+    - double values that may be NaN (JSON can not carry NaN):
+        {
+          "read_expr": "REAL_TO_LREAL(G_rMf)",
+          "handle_nan": true
+        }
+
     Optional out-of-range fields are allowed at schema level and validated later
     by business rules.
     """
     read_expr: Optional[str] = None
     enum_tag: Optional[str] = None
+    # Optional. TRUE when enum_tag is a BOOL PLC tag: the generator converts
+    # it with BOOL_TO_INT() instead of assigning the tag directly.
+    enum_tag_is_bool: Optional[bool] = None
+    # Optional. TRUE when the PLC value may be NaN: the generator adds a status
+    # branch (ERROR + 'ReadFailed' error report) so NaN is never sent as data.
+    handle_nan: Optional[bool] = None
     outofrange_min: Optional[float] = None
     outofrange_max: Optional[float] = None
 
@@ -209,6 +226,12 @@ class PlcTargetConfig(StrictBaseModel):
           "reach_timeout_s": 60
         }
 
+    - enum targets mapped to a BOOL PLC tag (enum members must be 0 and/or 1):
+        {
+          "enum_tag": "G_xHeatSwitchCmd",
+          "enum_tag_is_bool": true
+        }
+
     Notes:
     - write_stmt and enum_tag are polymorphic and validated later according to
       the target datatype.
@@ -216,6 +239,9 @@ class PlcTargetConfig(StrictBaseModel):
     """
     write_stmt: Optional[str] = None
     enum_tag: Optional[str] = None
+    # Optional. TRUE when enum_tag is a BOOL PLC tag: the generator writes it
+    # with INT_TO_BOOL() instead of a CASE over the enum members.
+    enum_tag_is_bool: Optional[bool] = None
     change_possible_expr: Optional[str] = None
     reach_timeout_s: Optional[int] = None
 
@@ -263,6 +289,13 @@ class PlcCustomParamConfig(StrictBaseModel):
           "enum_tag": "G_iSomething"
         }
 
+    - enum custom parameter mapped to a BOOL PLC tag (enum members must be
+      0 and/or 1):
+        {
+          "enum_tag": "G_xSomething",
+          "enum_tag_is_bool": true
+        }
+
     Notes:
     - This mirrors the same idea used for the standard 'value' mapping.
     - Business rules later decide which fields are allowed according to the
@@ -270,6 +303,8 @@ class PlcCustomParamConfig(StrictBaseModel):
     """
     read_expr: Optional[str] = None
     enum_tag: Optional[str] = None
+    # Optional. TRUE when enum_tag is a BOOL PLC tag (BOOL_TO_INT() conversion).
+    enum_tag_is_bool: Optional[bool] = None
 
 
 class PlcModuleConfig(StrictBaseModel):
@@ -287,14 +322,15 @@ class PlcModuleConfig(StrictBaseModel):
     - custom_parameters: dictionary keyed by SECoP custom parameter name
       (for example "_sensor")
 
-    Optional deactivation:
-    - inactive_condition: PLC boolean expression. When it evaluates TRUE the
-      module reports "NoSuchModule" to SECoP clients, so the same PLC project can
-      expose different module sets depending on the equipment configuration.
-      Totally optional: absent means the module is always active.
+    Optional exclusion:
+    - exclude_condition: PLC boolean expression. When it evaluates TRUE the
+      module is excluded from the SEC node: it is removed from the structure
+      report (describe) and reports "NoSuchModule" to SECoP clients, so the same
+      PLC project can expose different module sets depending on the equipment
+      configuration. Totally optional: absent means the module is always included.
     """
     timestamp_tag: Optional[str] = None
-    inactive_condition: Optional[str] = None
+    exclude_condition: Optional[str] = None
 
     value: Optional[PlcValueConfig] = None
     status: Optional[PlcStatusConfig] = None

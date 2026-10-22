@@ -92,6 +92,10 @@ def _target_temp_var_type(resolved: ResolvedModuleClass) -> str:
     """
     if resolved.value.is_enum:
         return "INT"
+    if resolved.value.is_string:
+        # One extra char so that a decoded text longer than maxchars is not
+        # silently truncated and can be detected (see _emit_string_change_target)
+        return f"STRING({_string_max_len(resolved.value.plc_type) + 1})"
     return resolved.value.plc_type
 
 
@@ -101,7 +105,7 @@ def _emit_status_data_report(action_expr: str, accessible_expr: str) -> list[str
     """
     return [
         "  A_GenerateStatusDataReport(); // Generate status data report and store it in sBuiltDataReport",
-        f"  M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := {action_expr}, i_sAccessible := {accessible_expr}, i_sDataReport:= sBuiltDataReport); // Status",
+        f"  M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := {action_expr}, i_sAccessible := {accessible_expr}, i_sDataReport:= sBuiltDataReport); // status",
     ]
 
 
@@ -569,12 +573,12 @@ def emit_header_comments(resolved: ResolvedModuleClass) -> list[str]:
     lines.append("//  1 - Sync mode. Process client request")
 
     if resolved.interface_class == "Drivable":
-        lines.append("//  2 - Async. mode.")
+        lines.append("//  2 - Async mode")
         lines.append("//  2.1 - State machine for handling target drive and stop command")
         lines.append("//  2.2 - Handle module updates for subscribed clients")
         lines.append("//  3 - Monitor target drive while status is BUSY, and update status when done")
     else:
-        lines.append("//  2 - Async. mode. Handle module updates for subscribed clients")
+        lines.append("//  2 - Async mode. Handle module updates for subscribed clients")
 
     lines.append("// ============================================================================")
     lines.append("")
@@ -742,7 +746,7 @@ def _emit_numeric_out_of_range_block(resolved: ResolvedModuleClass) -> list[str]
     if not (has_oor or has_minmax):
         return lines
 
-    lines.append("//  0 - Monitor value to generate out of range warning/error if configured")
+    lines.append("// 0 - Monitor value to generate out of range warning/error if configured")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("// Update module status when value goes out of range if module is in IDLE (keep current status otherwise)")
     lines.append("IF fbRtrigIsFirstClient.Q AND NOT iq_stErrorReport.xActive AND iq_stStatus.etCode = SECOP.ET_StatusCode.Idle THEN")
@@ -792,7 +796,7 @@ def _emit_enum_out_of_range_block(resolved: ResolvedModuleClass) -> list[str]:
     if not resolved.value.is_enum or not resolved.value.members:
         return lines
 
-    lines.append("//  0 - Monitor value to generate out of range warning/error if configured")
+    lines.append("// 0 - Monitor value to generate out of range warning/error if configured")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("// Update module status when value goes out of range if module is in IDLE (keep current status otherwise)")
     lines.append("IF fbRtrigIsFirstClient.Q AND NOT iq_stErrorReport.xActive AND iq_stStatus.etCode = SECOP.ET_StatusCode.Idle THEN")
@@ -919,7 +923,8 @@ def _emit_numeric_change_target(resolved: ResolvedModuleClass) -> list[str]:
                 indent="      ",
             )
         )
-        lines.append("      xTargetChanged := TRUE;")
+        lines.append("      iq_stTargetWrite.xTargetChangeRequest := TRUE; // SecopMapToPlc applies it in hardware and resets it")
+        lines.append("      xTargetChangeUpdate := TRUE;")
         lines.append("      iq_stTargetWrite.stTargetChangeClient.sIp := i_stClientMonitored.sIp;")
         lines.append("      iq_stTargetWrite.stTargetChangeClient.uiPort := i_stClientMonitored.uiPort;")
 
@@ -974,7 +979,8 @@ def _emit_enum_change_target(resolved: ResolvedModuleClass) -> list[str]:
         lines.append("      iq_stTargetDrive.uiState := 1;")
     else:
         lines.append("      M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'changed', i_sAccessible := i_sAccessible, i_sDataReport:= INT_TO_STRING(iq_etTarget));")
-        lines.append("      xTargetChanged := TRUE;")
+        lines.append("      iq_stTargetWrite.xTargetChangeRequest := TRUE; // SecopMapToPlc applies it in hardware and resets it")
+        lines.append("      xTargetChangeUpdate := TRUE;")
         lines.append("      iq_stTargetWrite.stTargetChangeClient.sIp := i_stClientMonitored.sIp;")
         lines.append("      iq_stTargetWrite.stTargetChangeClient.uiPort := i_stClientMonitored.uiPort;")
 
@@ -989,29 +995,46 @@ def _emit_string_change_target(resolved: ResolvedModuleClass) -> list[str]:
     """
     Emit the target-change inner block for a string-valued Writable or Drivable module.
 
-    Validation: reject if the incoming data looks like a number, or if it
-    exceeds the declared STRING max length.
-    Apply (Writable):  decode JSON string from i_sData into iq_sTarget via
-                       M_JsonDecodeString; report i_sData (already JSON) back to client.
-    Apply (Drivable):  store raw JSON in iq_sTargetChangeNewVal; the drive state
-                       machine will decode it when the target is actually applied.
+    Validation: reject if the incoming data looks like a number, or if the
+    JSON data is clearly too long (2*maxchars + 2: every char escaped plus the
+    JSON double quotes). The exact length check (maxchars) is done on the
+    decoded text, so escaped characters (e.g. \", \\) do not count twice.
+    The temporary variable is STRING(maxchars + 1) so that an overflow is
+    detected instead of silently truncated.
+    Decoding: the JSON string in i_sData is decoded into the temporary variable
+              (e.g. sTargetNewVal) first. If it is not a valid JSON string
+              (e.g. no double quotes), "BadJSON" is returned and the target
+              is left unchanged.
+    Apply (Writable):  copy the decoded value into iq_sTarget; report i_sData
+                       (already JSON) back to the client.
+    Apply (Drivable):  copy the decoded value into iq_sTargetChangeNewVal and
+                       start the target drive state machine.
     """
     lines: list[str] = []
 
     max_len = _string_max_len(resolved.value.plc_type)
+    temp_var = _target_temp_var_name(resolved)
 
-    lines.append(f"    IF M_CheckIfDataIsNumeric(i_sDataToParse:= i_sData, i_xMustBeInteger:= FALSE) OR StrLenA(pstData:= ADR(i_sData)) > {max_len} THEN // Unexpected data type")
+    # i_sData is the JSON value: at most every char escaped (2 chars) plus the 2 double quotes
+    lines.append(f"    IF M_CheckIfDataIsNumeric(i_sDataToParse:= i_sData, i_xMustBeInteger:= FALSE) OR StrLenA(pstData:= ADR(i_sData)) > {2 * max_len + 2} THEN // Unexpected data type or clearly too long (2*maxchars + 2: escaped chars + JSON double quotes)")
     lines.append('     A_ReturnErrorWrongType(); // Return "WrongType" error')
+    lines.append("    ")
+    lines.append(f"    ELSIF NOT M_JsonDecodeString(i_sJsonString:= i_sData, q_sRawString=> {temp_var}) THEN // Not a valid JSON string (e.g. missing double quotes)")
+    lines.append('     A_ReturnErrorDataNotParsed(); // Return "BadJSON" error. Target unchanged')
+    lines.append("    ")
+    lines.append(f"    ELSIF StrLenA(pstData:= ADR({temp_var})) > {max_len} THEN // Decoded text longer than maxchars")
+    lines.append('     A_ReturnErrorWrongType(); // Return "WrongType" error. Target unchanged')
     lines.append("    ")
     lines.append("    ELSE // Apply new target value")
     if resolved.interface_class == "Drivable":
-        lines.append("     M_JsonDecodeString(i_sJsonString:= i_sData, q_sRawString=> iq_sTargetChangeNewVal);")
+        lines.append(f"     iq_sTargetChangeNewVal := {temp_var};")
         lines.append("     M_UpdateTargetDriveClientList(i_stClient:= i_stClientMonitored);")
         lines.append("     iq_stTargetDrive.uiState := 1;")
     else:
-        lines.append("     M_JsonDecodeString(i_sJsonString:= i_sData, q_sRawString=> iq_sTarget);")
+        lines.append(f"     iq_sTarget := {temp_var};")
         lines.append("     M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'changed', i_sAccessible := i_sAccessible, i_sDataReport:= i_sData); // target")
-        lines.append("     xTargetChanged := TRUE;")
+        lines.append("     iq_stTargetWrite.xTargetChangeRequest := TRUE; // SecopMapToPlc applies it in hardware and resets it")
+        lines.append("     xTargetChangeUpdate := TRUE;")
         lines.append("     iq_stTargetWrite.stTargetChangeClient.sIp := i_stClientMonitored.sIp;")
         lines.append("     iq_stTargetWrite.stTargetChangeClient.uiPort := i_stClientMonitored.uiPort;")
     lines.append("    END_IF")
@@ -1327,7 +1350,7 @@ def _emit_sync_do(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[str
         lines.append("   ")
         lines.append("   IF xTargetChangeInterlock THEN // Target change interlocks healthy")
         lines.append("    ")
-        lines.append("    IF iq_stTargetDrive.uiState = 0 OR iq_stTargetDrive.uiState >= 4 THEN // No target change is underway")
+        lines.append("    IF iq_stTargetDrive.uiState = 0 OR iq_stTargetDrive.uiState >= 4 THEN // No target change is ongoing")
         lines.append("     ; // Ignore request")
         lines.append("    ")
         lines.append("    ELSIF iq_stTargetDrive.xStopCmd THEN // A stop command is already ongoing")
@@ -1398,21 +1421,21 @@ def emit_sync_block(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[s
     lines.append("IF i_xSyncModeRequest AND (i_sModuleRequested = iq_sName OR (StrIsNullOrEmptyA(ADR(i_sModuleRequested)) AND (i_sAction = 'activate' OR i_sAction = 'deactivate'))) THEN")
     lines.append(" ")
 
-    # Deactivate the module when not applicable to the current equipment
-    # configuration. xInactive is set each cycle by SecopMapFromPlc only for
-    # modules that configured x-plc.inactive_condition; it stays FALSE for all
+    # Exclude the module when not applicable to the current equipment
+    # configuration. xExcluded is set each cycle by SecopMapFromPlc only for
+    # modules that configured x-plc.exclude_condition; it stays FALSE for all
     # other modules, so the normal request handling in the ELSIF always runs.
-    # An inactive module returns "NoSuchModule" only when a client addresses it
+    # An excluded module returns "NoSuchModule" only when a client addresses it
     # by name; on a broadcast activate/deactivate it is silently skipped (no
     # error, no updates).
-    lines.append(" // Deactivate module when not applicable based on the equipment configuration")
-    lines.append(" IF iq_stStatus.xInactive AND i_sModuleRequested = iq_sName THEN")
+    lines.append(" // Module excluded from the SEC node (not applicable to the current equipment configuration)")
+    lines.append(" IF i_xExcluded AND i_sModuleRequested = iq_sName THEN")
     lines.append("  // Return \"NoSuchModule\" error")
     lines.append("  iq_stErrorReport.sClass := 'NoSuchModule';")
     lines.append("  iq_stErrorReport.sDescription := iq_sName;")
     lines.append("  StrConcatA(pstFrom:= ADR(' is not active on this SEC node'), pstTo:= ADR(iq_stErrorReport.sDescription), iBufferSize:= UINT_TO_INT(SECoP.GPL.Gc_uiMaxSizeDescription));")
     lines.append("  M_ReplyWithErrorStraightAway(i_xErrorLatched:= FALSE);")
-    lines.append(" ELSIF NOT iq_stStatus.xInactive THEN")
+    lines.append(" ELSIF NOT i_xExcluded THEN")
     lines.append(" ")
 
     lines.extend(_emit_sync_activate(resolved, tasklist))
@@ -1422,7 +1445,7 @@ def emit_sync_block(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[s
     lines.extend(_emit_sync_do(resolved, tasklist))
 
     lines.append(" END_IF")  # closes IF i_sAction = 'activate' / ELSIF chain
-    lines.append(" END_IF")  # closes IF iq_stStatus.xInactive / ELSE
+    lines.append(" END_IF")  # closes IF i_xExcluded / ELSE
     lines.append("END_IF")  # closes IF i_xSyncModeRequest AND ...
     lines.append("")
 
@@ -1442,7 +1465,7 @@ def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> lis
 
     target_var = f"iq_{resolved.value.var_prefix}Target"
 
-    lines.append("// Target drive state machine")
+    lines.append("// 2.1 - State machine for handling target drive and stop command")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("CASE iq_stTargetDrive.uiState OF")
     lines.append(" ")
@@ -1463,11 +1486,11 @@ def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> lis
     lines.append("    ")
     lines.append("    // Send update messages")
     lines.append("    A_GenerateStatusDataReport();")
-    lines.append("    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'status', i_sDataReport:= sBuiltDataReport); // Status")
+    lines.append("    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'status', i_sDataReport:= sBuiltDataReport); // status")
     lines.extend(_value_data_report_lines(resolved, "'change'", "    "))
     lines.append("")
     lines.append('    // Target data is sent through a "changed" message to the client that sent the last target change request')
-    lines.append('    // or through a "change" message to the rest of concerned clients')
+    lines.append('    // or through an "update" message to the rest of concerned clients')
     lines.append("    IF iq_stTargetWrite.stTargetChangeClient.sIp = i_stClientMonitored.sIp AND iq_stTargetWrite.stTargetChangeClient.uiPort = i_stClientMonitored.uiPort AND NOT iq_stTargetDrive.xStopCmd THEN")
     lines.extend(_target_data_report_lines(resolved, target_var, "'changed'", "'target'", "     "))
     lines.append("    ELSE")
@@ -1498,7 +1521,7 @@ def _emit_async_target_drive_state_machine(resolved: ResolvedModuleClass) -> lis
     lines.append("   ")
     lines.append("   // Return module status")
     lines.append("   A_GenerateStatusDataReport();")
-    lines.append("   M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'status', i_sDataReport:= sBuiltDataReport); // Status")
+    lines.append("   M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'change', i_sAccessible := 'status', i_sDataReport:= sBuiltDataReport); // status")
     lines.append("   IF NOT iq_stErrorReport.xActive THEN")
     lines.extend(_value_data_report_lines(resolved, "'change'", "    "))
     lines.extend(_target_data_report_lines(resolved, target_var, "'change'", "'target'", "    "))
@@ -1538,9 +1561,10 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
         (bool(_t.has_limits_max) and not bool(_t.has_limits_max_readonly))
     )
 
-    lines.append("// Handle module updates for subscribed clients")
-    lines.append("// ----------------------------------------------------------------------------")
-    lines.append("")
+    if resolved.interface_class == "Drivable":
+        lines.append("// 2.2 - Handle module updates for subscribed clients")
+        lines.append("// ----------------------------------------------------------------------------")
+        lines.append("")
     lines.append("// Remove disconnected clients from subscriber list")
     lines.append("IF i_xClientDisconnectedFlag THEN")
     lines.append(" M_RemoveSubscribedClientFromList(i_stClient:= i_stClientDisconnected);")
@@ -1566,14 +1590,14 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
         lines.append("IF fbRtrigIsFirstClient.Q AND")
         lines.append(" ((xPollIntervalDone OR xPollIntervalChanged)")
         if extra_flags:
-            lines.append(f"  OR xTargetChanged OR {' OR '.join(extra_flags)}) THEN")
+            lines.append(f"  OR xTargetChangeUpdate OR {' OR '.join(extra_flags)}) THEN")
         else:
-            lines.append("  OR xTargetChanged) THEN")
+            lines.append("  OR xTargetChangeUpdate) THEN")
     lines.append("  xUpdateAllSubscribers := TRUE;")
     lines.append("END_IF")
     lines.append("")
     lines.append("// Update subscribers")
-    lines.append("IF xUpdateAllSubscribers AND NOT iq_stStatus.xInactive THEN")
+    lines.append("IF xUpdateAllSubscribers AND NOT i_xExcluded THEN")
     lines.append(" M_CheckIfClientIsSubscribed(i_stClient:= i_stClientMonitored); // Set xClientIsSubscribed to TRUE if monitored client is on the subscriber list")
     lines.append(" IF xClientIsSubscribed THEN")
     lines.append("  ")
@@ -1585,13 +1609,13 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
     lines.append("  ELSE")
     lines.append("   // Update subscribers when changing polling interval")
     lines.append("   IF xPollIntervalChanged THEN")
-    lines.append("    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'update', i_sAccessible := 'pollinterval', i_sDataReport:= LREAL_TO_STRING(iq_stPollInterval.lrValue)); // Poll interval")
+    lines.append("    M_AddDataReportToReplyMessage(i_xReturnError := FALSE, i_sAction := 'update', i_sAccessible := 'pollinterval', i_sDataReport:= LREAL_TO_STRING(iq_stPollInterval.lrValue)); // pollinterval")
     lines.append("   END_IF")
 
     if resolved.interface_class == "Writable":
         target_expr = f"iq_{resolved.value.var_prefix}Target"
         lines.append("   // Update subscribers when changing target")
-        lines.append("   IF xTargetChanged THEN")
+        lines.append("   IF xTargetChangeUpdate THEN")
         lines.extend(
             _target_data_report_lines(
                 resolved=resolved,
@@ -1639,8 +1663,8 @@ def _emit_async_handle_updates(resolved: ResolvedModuleClass, tasklist: TaskList
     lines.append(" xPollIntervalChanged := FALSE;")
 
     if resolved.interface_class == "Writable":
-        lines.append(" IF xTargetChanged THEN")
-        lines.append("  xTargetChanged := FALSE;")
+        lines.append(" IF xTargetChangeUpdate THEN")
+        lines.append("  xTargetChangeUpdate := FALSE;")
         lines.append("  iq_stTargetWrite.stTargetChangeClient.sIp := '';")
         lines.append("  iq_stTargetWrite.stTargetChangeClient.uiPort := 0;")
         lines.append(" END_IF")
@@ -1669,7 +1693,10 @@ def emit_async_block(resolved: ResolvedModuleClass, tasklist: TaskList) -> list[
     """
     lines: list[str] = []
 
-    lines.append("// 2 - Asynchronous mode")
+    if resolved.interface_class == "Drivable":
+        lines.append("// 2 - Async mode")
+    else:
+        lines.append("// 2 - Async mode. Handle module updates for subscribed clients")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("")
 
@@ -1698,7 +1725,7 @@ def emit_target_drive_monitor_block(resolved: ResolvedModuleClass) -> list[str]:
     if resolved.interface_class != "Drivable":
         return lines
 
-    lines.append("//  3 - Monitor target driving and update module status when done")
+    lines.append("// 3 - Monitor target drive while status is BUSY, and update status when done")
     lines.append("// ----------------------------------------------------------------------------")
     lines.append("")
     lines.append("// Monitor process value and target value. Set q_xSpReached to TRUE if target is reached on time. Set q_xSpFail to TRUE otherwise")

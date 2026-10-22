@@ -74,19 +74,22 @@ def _needs_rtrig(module: ResolvedRealModule) -> bool:
     return _is_drivable(module)
 
 
-def _needs_num_monitor(module: ResolvedRealModule) -> bool:
+def _is_writable_num_or_enum_target(module: ResolvedRealModule) -> bool:
     """
-    Writable non-drivable modules monitor the SECoP target variable to detect
-    changes that should be written to hardware.
+    Writable non-drivable module with a numeric or enum target.
+
+    Since library v1.2.0.0 the target is applied in hardware on every accepted
+    change request (stTargetWrite.xTargetChangeRequest), even if the value is
+    the same as the last one (e.g. HMI changed the hardware value meanwhile).
     """
     return _is_writable_not_drivable(module) and (
         module.value_is_numeric or module.value_is_enum
     )
 
 
-def _needs_small_string_monitor(module: ResolvedRealModule) -> bool:
+def _is_writable_string_target(module: ResolvedRealModule) -> bool:
     """
-    Writable non-drivable string modules use a small-string monitor FB.
+    Writable non-drivable module with a string target (applied on request flag).
     """
     return _is_writable_not_drivable(module) and module.value_is_string
 
@@ -106,42 +109,11 @@ def _emit_var_block(resolved_real_modules: ResolvedRealModules) -> list[str]:
         if _needs_rtrig(module):
             lines.append(f" fbRtrigApplyTarget_{module_name} : R_TRIG;")
 
-        if _needs_num_monitor(module):
-            lines.append(f" fbMonitorNumValue_{module_name} : SECOP.FB_MonitorNumValue;")
-
-        if _needs_small_string_monitor(module):
-            lines.append(f" fbMonitorSmallString_{module_name} : SECOP.FB_MonitorSmallString;")
-
     lines.append("END_VAR")
     lines.append("")
 
     return lines
 
-
-def _target_monitor_input_expr(module: ResolvedRealModule) -> str:
-    """
-    Build the i_rVar expression used by FB_MonitorNumValue.
-
-    Rules:
-    - enum  -> INT_TO_REAL(...)
-    - LREAL -> LREAL_TO_REAL(...)
-    - DINT  -> DINT_TO_REAL(...)
-    """
-    pfx = _module_prefix(module.module_name)
-
-    if module.value_is_enum:
-        return f"INT_TO_REAL({pfx}.etTarget)"
-
-    if module.value_plc_type == "LREAL":
-        return f"LREAL_TO_REAL({pfx}.{module.value_var_prefix}Target)"
-
-    if module.value_plc_type == "DINT":
-        return f"DINT_TO_REAL({pfx}.{module.value_var_prefix}Target)"
-
-    raise ValueError(
-        f"Unsupported numeric target monitor conversion for module "
-        f"{module.module_name} with plc type {module.value_plc_type}"
-    )
 
 
 def _emit_drivable_apply_target_block(
@@ -189,7 +161,9 @@ def _emit_drivable_apply_target_block(
         enum_tag = module.x_plc_target.enum_tag if module.x_plc_target else None
         members = _resolved_enum_members(module, resolved_classes)
 
-        if enum_tag and members:
+        if enum_tag and module.x_plc_target.enum_tag_is_bool:
+            lines.append(f" {enum_tag} := INT_TO_BOOL({pfx}.etTarget);")
+        elif enum_tag and members:
             lines.append(f" CASE {pfx}.etTarget OF")
             for member_name, member_value in members:
                 st_name = sanitize_enum_member_name(member_name)
@@ -250,11 +224,9 @@ def _emit_writable_apply_target_block(
 
     lines.append("// Apply new target value in hardware")
 
-    if _needs_num_monitor(module):
-        lines.append(
-            f"fbMonitorNumValue_{module.module_name}(i_rVar:= {_target_monitor_input_expr(module)});"
-        )
-        lines.append(f"IF fbMonitorNumValue_{module.module_name}.q_xHasChanged THEN")
+    if _is_writable_num_or_enum_target(module):
+        lines.append(f"IF {pfx}.stTargetWrite.xTargetChangeRequest THEN")
+        lines.append(f" {pfx}.stTargetWrite.xTargetChangeRequest := FALSE;")
 
         if module.value_is_numeric:
             write_stmt = module.x_plc_target.write_stmt if module.x_plc_target else None
@@ -277,7 +249,9 @@ def _emit_writable_apply_target_block(
             enum_tag = module.x_plc_target.enum_tag if module.x_plc_target else None
             members = _resolved_enum_members(module, resolved_classes)
 
-            if enum_tag and members:
+            if enum_tag and module.x_plc_target.enum_tag_is_bool:
+                lines.append(f" {enum_tag} := INT_TO_BOOL({pfx}.etTarget);")
+            elif enum_tag and members:
                 lines.append(f" CASE {pfx}.etTarget OF")
                 for member_name, member_value in members:
                     st_name = sanitize_enum_member_name(member_name)
@@ -302,9 +276,9 @@ def _emit_writable_apply_target_block(
         lines.append("")
         return lines
 
-    if _needs_small_string_monitor(module):
-        lines.append(f"fbMonitorSmallString_{module.module_name}(i_sVar:= {pfx}.sTarget);")
-        lines.append(f"IF fbMonitorSmallString_{module.module_name}.q_xHasChanged THEN")
+    if _is_writable_string_target(module):
+        lines.append(f"IF {pfx}.stTargetWrite.xTargetChangeRequest THEN")
+        lines.append(f" {pfx}.stTargetWrite.xTargetChangeRequest := FALSE;")
 
         write_stmt = module.x_plc_target.write_stmt if module.x_plc_target else None
         if write_stmt:

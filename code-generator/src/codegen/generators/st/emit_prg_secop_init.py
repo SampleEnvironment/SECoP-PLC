@@ -27,6 +27,7 @@ from codegen.resolve.real_modules import (
     ResolvedRealModules,
 )
 from codegen.tasklist import TaskList
+from codegen.generators.st.st_utils import format_st_string_literal
 
 
 # ---------------------------------------------------------------------------
@@ -68,14 +69,13 @@ def _format_st_scalar(value: float | int | str) -> str:
     Format a scalar for ST assignment.
 
     Notes:
-    - strings are single-quoted
+    - strings are single-quoted, with IEC escaping ($ -> $$, ' -> $')
     - floats with no fractional part are emitted as integers (e.g. 10000.0 -> 10000)
       so that the literal is compatible with both DINT and LREAL variables.
     - other numbers are emitted as-is
     """
     if isinstance(value, str):
-        escaped = value.replace("'", "''")
-        return f"'{escaped}'"
+        return format_st_string_literal(value)
     if isinstance(value, float) and value == int(value):
         return str(int(value))
     return str(value)
@@ -95,8 +95,7 @@ def _format_server_ip(value: str) -> str:
         "sPlcAddress2"  ->  "sPlcAddress2"
     """
     if value.count(".") == 3:
-        escaped = value.replace("'", "''")
-        return f"'{escaped}'"
+        return format_st_string_literal(value)
     return value
 
 
@@ -137,10 +136,15 @@ def _emit_fixed_header() -> list[str]:
     lines.append("{warning 'SECOP library is newer than supported by the code generator.'}")
     lines.append("{END_IF}")
     lines.append("")
+    # JSON Utilities SL detection kept, but commented out: the SECoP library
+    # v1.2.0.0 no longer uses JSON Utilities SL (code commented out there too).
     lines.append("// Detect if JSON Utilities SL library is installed")
+    lines.append("// (commented out: JSON Utilities SL support is currently disabled in the SECoP library)")
+    lines.append("(*")
     lines.append("{IF defined(variable:JSON.GParams.g_diMaxDepth)}")
     lines.append(" SECOP.GVL.G_xJsonLibInstalled := TRUE;")
     lines.append("{END_IF}")
+    lines.append("*)")
     lines.append("")
     lines.append("// Assign FB_SecopProcessModules instance to library's interface")
     lines.append("SECOP.GVL.G_ProcessModules := GVL_SecNode.G_SecopProcessModules;")
@@ -173,15 +177,8 @@ def _emit_init_sec_node(
     lines.append("")
     lines.append(f"SECOP.GVL.G_st_SecNode.sFirmware := {_format_st_scalar(sec_node.firmware)};")
 
-    lines.extend(
-        _emit_optional_scalar_assignment_with_task(
-            "SECOP.GVL.G_st_SecNode.sSecopVersion",
-            sec_node.secop_version,
-            "SecopInit.sec_node.secop_version",
-            "Configure SEC node SECoP version.",
-            tasklist,
-        )
-    )
+    # SECoP protocol version is owned by the library since v1.2.0.0
+    # (constant GCL.Gc_sSecopVersion). There is no x-plc field for it.
 
     if sec_node.tcp_server_ip is None:
         lines.append(
@@ -208,9 +205,12 @@ def _emit_init_sec_node(
     for idx, module_name in enumerate(sec_node.module_names_in_order, start=1):
         lines.append(f"SECOP.GVL.G_st_SecNode.asModule[{idx}] := {_format_st_scalar(module_name)};")
 
-    lines.append(
-        f"SECOP.GVL.G_st_SecNode.sStructureReport := {_format_st_scalar(sec_node.structure_report_json)};"
-    )
+    if sec_node.structure_report_dynamic:
+        lines.append("// Structure report: built in SecopMapFromPlc from the non-excluded modules")
+    else:
+        lines.append(
+            f"SECOP.GVL.G_st_SecNode.sStructureReport := {_format_st_scalar(sec_node.structure_report_json)};"
+        )
     lines.append("")
 
     return lines
@@ -265,7 +265,12 @@ def _emit_module_init(
         lines.append(f"{pfx}.{vp}TargetLimitsMax_Min := {_format_st_scalar(module.target_limits_max_min)};")
         lines.append(f"{pfx}.{vp}TargetLimitsMax_Max := {_format_st_scalar(module.target_limits_max_max)};")
 
-    lines.append(f"{pfx}.stPollInterval.lrValue := 5;")
+    # Default pollinterval 5 s; if outside [min, max], use max (or min if no max)
+    poll_default = 5
+    p_min, p_max = module.pollinterval_min, module.pollinterval_max
+    if (p_min is not None and poll_default < p_min) or (p_max is not None and poll_default > p_max):
+        poll_default = p_max if p_max is not None else p_min
+    lines.append(f"{pfx}.stPollInterval.lrValue := {_format_st_scalar(poll_default)};")
     lines.append(f"{pfx}.stPollInterval.lrMin := {_format_st_scalar(module.pollinterval_min)};")
     lines.append(f"{pfx}.stPollInterval.lrMax := {_format_st_scalar(module.pollinterval_max)};")
     lines.append(f"{pfx}.stPollInterval.xReadOnly := {_bool_literal(module.pollinterval_readonly)};")

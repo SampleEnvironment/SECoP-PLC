@@ -80,7 +80,9 @@ from codegen.rules.plc_rules import (
     rule_xplc_clear_errors_only_if_command_exists,
     rule_xplc_custom_parameters_exist_and_match_accessibles,
     rule_xplc_custom_parameter_mapping_by_type,
-    rule_xplc_inactive_condition_not_empty,
+    rule_xplc_exclude_condition_not_empty,
+    rule_xplc_enum_tag_is_bool_members,
+    rule_xplc_value_handle_nan_double_only,
 )
 
 
@@ -139,11 +141,13 @@ def validate_config(cfg: SecNodeConfig) -> list[Finding]:
     findings.extend(rule_xplc_value_mapping_by_type(cfg))                        # R-PLC-030/031
     findings.extend(rule_xplc_target_mapping_by_type(cfg))                       # R-PLC-032/033
     findings.extend(rule_xplc_value_outofrange_numeric_only(cfg))                # R-PLC-034
+    findings.extend(rule_xplc_value_handle_nan_double_only(cfg))                 # R-PLC-036
     findings.extend(rule_xplc_clear_errors_cmd_stmt_optional(cfg))               # R-PLC-040
     findings.extend(rule_xplc_clear_errors_only_if_command_exists(cfg))          # R-PLC-041
     findings.extend(rule_xplc_custom_parameters_exist_and_match_accessibles(cfg))  # R-PLC-050
     findings.extend(rule_xplc_custom_parameter_mapping_by_type(cfg))             # R-PLC-051/052
-    findings.extend(rule_xplc_inactive_condition_not_empty(cfg))                 # R-PLC-060
+    findings.extend(rule_xplc_exclude_condition_not_empty(cfg))                 # R-PLC-060
+    findings.extend(rule_xplc_enum_tag_is_bool_members(cfg))                    # R-PLC-035/053
 
     return findings
 

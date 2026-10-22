@@ -280,7 +280,7 @@ def _emit_target_block(resolved_class: ResolvedModuleClass) -> list[str]:
 
     target_tol = _find_var(vars_, f"{value_prefix}TargetDriveTolerance")
     if target_tol:
-        lines.append(" /// Target drive - Setpoint reached absolute tolerance")
+        lines.append(" /// Target drive - absolute tolerance to consider target reached")
         lines.append(f" {target_tol.name}: {target_tol.plc_type};")
 
     return lines

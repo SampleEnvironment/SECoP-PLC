@@ -81,6 +81,10 @@ class ResolvedRealModuleValuePlc:
     enum_tag: str | None
     outofrange_min: float | int | None
     outofrange_max: float | int | None
+    # TRUE when enum_tag is a BOOL PLC tag (x-plc.value.enum_tag_is_bool)
+    enum_tag_is_bool: bool = False
+    # TRUE when the value may be NaN (x-plc.value.handle_nan)
+    handle_nan: bool = False
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,8 @@ class ResolvedRealModuleTargetPlc:
     reach_abs_tolerance_expr: str | None
     limit_min_expr: str | None
     limit_max_expr: str | None
+    # TRUE when enum_tag is a BOOL PLC tag (x-plc.target.enum_tag_is_bool)
+    enum_tag_is_bool: bool = False
 
 
 @dataclass(frozen=True)
@@ -139,6 +145,8 @@ class ResolvedRealCustomParameterPlc:
     secop_name: str
     read_expr: str | None
     enum_tag: str | None
+    # TRUE when enum_tag is a BOOL PLC tag (x-plc.custom_parameters.<p>.enum_tag_is_bool)
+    enum_tag_is_bool: bool = False
 
 
 @dataclass(frozen=True)
@@ -209,12 +217,12 @@ class ResolvedRealModule:
     x_plc_target: ResolvedRealModuleTargetPlc | None = None
     x_plc_clear_errors: ResolvedRealModuleClearErrorsPlc | None = None
 
-    # Raw (unstripped) x-plc.inactive_condition, kept as-is so emitters can tell
+    # Raw (unstripped) x-plc.exclude_condition, kept as-is so emitters can tell
     # three cases apart:
-    #   None       -> field absent            -> module always active, emit nothing
-    #   "expr"     -> configured              -> emit the xInactive assignment
+    #   None       -> field absent            -> module always included, emit nothing
+    #   "expr"     -> configured              -> emit the xExcluded assignment
     #   "" / "  "  -> present but empty       -> emit a task marker
-    inactive_condition_raw: str | None = None
+    exclude_condition_raw: str | None = None
 
 
 @dataclass(frozen=True)
@@ -226,13 +234,23 @@ class ResolvedRealSecNode:
     structural SECoP information.
     """
     firmware: str
-    secop_version: str | None
     tcp_server_ip: str | None
     tcp_server_port: int | None
     plc_timestamp_tag: str | None
     tcp_server_interface_healthy_tag: str | None
     module_names_in_order: list[str]
     structure_report_json: str
+    # Dynamic structure report (only when at least one module has
+    # x-plc.exclude_condition). The report is rebuilt at runtime as:
+    #   head + fragment(module_1) + "," + fragment(module_2) + ... + tail
+    # including only the modules that are not excluded.
+    #   head: node JSON up to and including '"modules":{'
+    #   fragments: '"<module>":{...}' per module, in config order (no commas)
+    #   tail: everything after the modules object (at least '}}')
+    structure_report_dynamic: bool = False
+    structure_report_head: str = ""
+    structure_report_tail: str = ""
+    structure_report_fragments: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -356,6 +374,39 @@ def _build_structure_report_json(cfg: dict[str, Any]) -> str:
     # this problem while remaining valid JSON that any client can read correctly.
     return json.dumps(without_x_plc, ensure_ascii=True, separators=(",", ":"))
 
+
+def _build_structure_report_parts(cfg: dict[str, Any]) -> tuple[str, str, dict[str, str]]:
+    """
+    Split the SECoP structure report into head, per-module fragments and tail.
+
+    Used for the dynamic structure report (modules with x-plc.exclude_condition).
+    The same JSON settings as _build_structure_report_json are used, so that
+    head + ",".join(fragments) + tail == _build_structure_report_json(cfg).
+    """
+    without_x_plc = _deep_remove_x_plc(cfg)
+    modules = without_x_plc.get("modules") or {}
+
+    marker = "__SECOP_PLC_MODULES__"
+    skeleton = dict(without_x_plc)
+    skeleton["modules"] = marker
+    skeleton_json = json.dumps(skeleton, ensure_ascii=True, separators=(",", ":"))
+    marker_json = json.dumps(marker)
+    if skeleton_json.count(marker_json) != 1:
+        raise ValueError("Could not locate 'modules' in the structure report")
+    head, tail = skeleton_json.split(marker_json)
+    head += "{"
+    tail = "}" + tail
+
+    fragments: dict[str, str] = {}
+    for name, mod in modules.items():
+        fragments[name] = (
+            json.dumps(name, ensure_ascii=True)
+            + ":"
+            + json.dumps(mod, ensure_ascii=True, separators=(",", ":"))
+        )
+
+    return head, tail, fragments
+
 # ---------------------------------------------------------------------------
 # Per-module resolver
 # ---------------------------------------------------------------------------
@@ -451,6 +502,7 @@ def _resolve_real_custom_parameter_plc_map(
             secop_name=cp.secop_name,
             read_expr=_strip_or_none(cfg.get("read_expr")),
             enum_tag=_strip_or_none(cfg.get("enum_tag")),
+            enum_tag_is_bool=bool(cfg.get("enum_tag_is_bool")),
         )
 
     return result
@@ -522,6 +574,8 @@ def _resolve_one_real_module(
         enum_tag=_strip_or_none(xplc_value.get("enum_tag")) if xplc_value else None,
         outofrange_min=xplc_value.get("outofrange_min") if xplc_value else None,
         outofrange_max=xplc_value.get("outofrange_max") if xplc_value else None,
+        enum_tag_is_bool=bool(xplc_value.get("enum_tag_is_bool")) if xplc_value else False,
+        handle_nan=bool(xplc_value.get("handle_nan")) if xplc_value else False,
     )
 
     # ------------------------------------------------------------
@@ -549,6 +603,7 @@ def _resolve_one_real_module(
         reach_abs_tolerance_expr=_strip_or_none(xplc_target.get("reach_abs_tolerance_expr")) if xplc_target else None,
         limit_min_expr=_strip_or_none(xplc_target.get("limit_min_expr")) if xplc_target else None,
         limit_max_expr=_strip_or_none(xplc_target.get("limit_max_expr")) if xplc_target else None,
+        enum_tag_is_bool=bool(xplc_target.get("enum_tag_is_bool")) if xplc_target else False,
     )
 
     # ------------------------------------------------------------
@@ -624,7 +679,7 @@ def _resolve_one_real_module(
 
         # Kept raw on purpose (see field docstring): presence and emptiness both
         # carry meaning for the SecopMapFromPlc emitter.
-        inactive_condition_raw=x_plc.get("inactive_condition"),
+        exclude_condition_raw=x_plc.get("exclude_condition"),
     )
 
 
@@ -671,15 +726,31 @@ def resolve_real_modules(
     if not isinstance(tcp_cfg, dict):
         raise ValueError("normalized_cfg['x-plc']['tcp'] must be a dict")
 
+    # Dynamic structure report when at least one module has the
+    # x-plc.exclude_condition key (even empty: the module may be excluded once
+    # the task marker is completed by hand)
+    structure_report_dynamic = any(
+        isinstance(m, dict)
+        and isinstance(m.get("x-plc"), dict)
+        and m["x-plc"].get("exclude_condition") is not None
+        for m in modules_cfg.values()
+    )
+    sr_head, sr_tail, sr_fragments = ("", "", {})
+    if structure_report_dynamic:
+        sr_head, sr_tail, sr_fragments = _build_structure_report_parts(raw_cfg)
+
     sec_node = ResolvedRealSecNode(
         firmware=str(normalized_cfg.get("firmware") or ""),
-        secop_version=str(x_plc_node.get("secop_version") or "") or None,
         tcp_server_ip=str(tcp_cfg.get("server_ip") or "") or None,
         tcp_server_port=int(tcp_cfg["server_port"]) if tcp_cfg.get("server_port") is not None else None,
         plc_timestamp_tag=str(x_plc_node.get("plc_timestamp_tag") or "") or None,
         tcp_server_interface_healthy_tag=str(tcp_cfg.get("interface_healthy_tag") or "") or None,
         module_names_in_order=list(modules_cfg.keys()),
         structure_report_json=_build_structure_report_json(raw_cfg),
+        structure_report_dynamic=structure_report_dynamic,
+        structure_report_head=sr_head,
+        structure_report_tail=sr_tail,
+        structure_report_fragments=sr_fragments,
     )
 
     modules: dict[str, ResolvedRealModule] = {}
