@@ -7,16 +7,16 @@ For detailed documentation, examples and guides, please refer to the Wiki.
 ## CODESYS library
 | | |
 |---|---|
-| **Version** | v1.1.0.0 |
+| **Version** | v1.2.0.0 |
 | **Source** | [project/](https://github.com/SampleEnvironment/SECoP-PLC/tree/master/project) |
-| **IDE** | CODESYS Development System 3.5 |
+| **IDE** | CODESYS Development System V3.5 SP22 |
 | **Tested platforms** | Schneider Electric M251, M262 |
 | **Vendor-specific dependencies** | TcpUdpCommunication — required when using the Schneider Electric platform |
 
 ## Code generator
 | | |
 |---|---|
-| **Version** | v1.1.0 |
+| **Version** | v1.2.0 |
 | **Language** | Python 3.14 |
 | **Docker** | Supported |
 | **Dependencies** | [`pydantic >= 2.0`](https://github.com/SampleEnvironment/SECoP-PLC/blob/master/code-generator/requirements.txt) |
@@ -50,9 +50,6 @@ All [data types](https://sampleenvironment.github.io/secop-site/specification/de
 
 ### Status codes
 Main [status codes](https://sampleenvironment.github.io/secop-site/specification/accessibles.html#status-codes) implemented: `DISABLED` (0), `IDLE` (100), `WARN` (200), `BUSY` (300), `ERROR` (400)
-
----
-
 
 ---
 
@@ -96,7 +93,7 @@ Please refer to the Wiki for more detailed documentation, including:
 
 ## 2. Current supported version
 
-The current CODESYS SECoP library version is **1.0.0.0**.
+The current CODESYS SECoP library version is **1.2.0.0**.
 
 From the PLC IDE, the library version can be obtained using:
 
@@ -129,17 +126,20 @@ If the CODESYS library evolves beyond the version supported by the code generato
 Once the library project has been updated:
 
 1. Update its version number and tick the 'Release' box on the 'Project Information' settings
+   - Update `GCL.Gc_dwLibVersionNumber` accordingly
+   - If the code generator is compatible with the new version, update `GC_DW_MAX_LIB_VERSION` in `src/codegen/utils/constants.py`
 2. Commit/push the new version describing the modifications on the changes log
-3. Save .library to releases/codesys_library
+3. Save .library to releases/codesys-library
 
 ---
 
 ## 4. Steps to create your own PLC SEC Node
 
 1. **Prepare the PLC project if required**
-   - From the PLC IDE, install and add the required libraries, such as SECoP and JSON utilities.
+   - From the PLC IDE, install and add the required libraries, such as SECoP and vendor-specific libraries e.g. for setting up a TCP server.
    - Configure the required project defines in the compile options, for example `SCHNEIDER_ELECTRIC`.
    - Set the relevant parameters in the GPL list according to the controller capabilities, such as TCP buffer sizes.
+   - `SECoP.GPL.Gc_uiMaxSizeMessage` must be greater than or equal to the length of the SEC Node structure report and less than or equal to 32767.
 
 2. **Design the SEC Node structure**
    - Define the SECoP node structure according to the SECoP protocol specification.
@@ -149,11 +149,13 @@ Once the library project has been updated:
    - Refer to the configuration file guide in the Wiki.
 
 4. **Run the code generator**
-   - Execute the code generator, for example:
+   - Execute the code generator from the `src` folder, for example:
 
      ```bash
-     python main.py --config inputs/secnodeplc_demo_config.json --out outputs/runs
+     python -m codegen.main --config ../inputs/examples/secnodeplc_demo_config.json --out ../outputs
      ```
+
+   - Alternatively, run it with Docker (see `code-generator/README.md`).
 
    - Review the validation report.
    - Fix validation errors and complete any missing configuration fields.
@@ -161,6 +163,8 @@ Once the library project has been updated:
 5. **Import the generated PLC code**
    - Import the generated PLCopenXML file containing the SEC Node code into the PLC project.
    - Add Program-POU calls to PLC Task Configuration, in this order: `SecopMapFromPlc`, `SECOP.Server`, `SecopMapToPlc`
+   - Use a cyclic task, preferably separate from the process control tasks and with a lower priority.
+   - If a watchdog is configured for this task, set it high (e.g. 1 s): cycle time peaks are observed when clients connect to or disconnect from the TCP server (and when a dynamic structure report is rebuilt).
 
 6. **Complete the remaining PLC implementation using the task list**
    - Use the generated task list to complete the remaining pieces of code.
