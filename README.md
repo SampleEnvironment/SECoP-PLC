@@ -7,7 +7,7 @@ For detailed documentation, examples and guides, please refer to the Wiki.
 ## CODESYS library
 | | |
 |---|---|
-| **Version** | v1.2.0.0 |
+| **Version** | v1.3.0.0 |
 | **Source** | [project/](https://github.com/SampleEnvironment/SECoP-PLC/tree/master/project) |
 | **IDE** | CODESYS Development System V3.5 SP22 |
 | **Tested platforms** | Schneider Electric M251, M262 |
@@ -16,7 +16,7 @@ For detailed documentation, examples and guides, please refer to the Wiki.
 ## Code generator
 | | |
 |---|---|
-| **Version** | v1.2.0 |
+| **Version** | v1.3.0 |
 | **Language** | Python 3.14 |
 | **Docker** | Supported |
 | **Dependencies** | [`pydantic >= 2.0`](https://github.com/SampleEnvironment/SECoP-PLC/blob/master/code-generator/requirements.txt) |
@@ -30,6 +30,7 @@ The library implements the following features of the [SECoP specification](https
 ### Messages
 - All [mandatory messages](https://sampleenvironment.github.io/secop-site/specification/messages.html#messages)
 - [Timestamp qualifier](https://sampleenvironment.github.io/secop-site/specification/reports.html#qualifiers)
+- [UDP discovery](https://sampleenvironment.github.io/secop-site/specification/discovery.html) (reply to discover requests)
 
 ### Descriptive data
 - All mandatory [SEC node properties](https://sampleenvironment.github.io/secop-site/specification/descriptive.html#sec-node-description), plus optional `firmware` and `implementor`
@@ -93,7 +94,7 @@ Please refer to the Wiki for more detailed documentation, including:
 
 ## 2. Current supported version
 
-The current CODESYS SECoP library version is **1.2.0.0**.
+The current CODESYS SECoP library version is **1.3.0.0**.
 
 From the PLC IDE, the library version can be obtained using:
 
@@ -139,7 +140,6 @@ Once the library project has been updated:
    - From the PLC IDE, install and add the required libraries, such as SECoP and vendor-specific libraries e.g. for setting up a TCP server.
    - Configure the required project defines in the compile options, for example `SCHNEIDER_ELECTRIC`.
    - Set the relevant parameters in the GPL list according to the controller capabilities, such as TCP buffer sizes.
-   - `SECoP.GPL.Gc_uiMaxSizeMessage` must be greater than or equal to the length of the SEC Node structure report and less than or equal to 32767.
 
 2. **Design the SEC Node structure**
    - Define the SECoP node structure according to the SECoP protocol specification.
