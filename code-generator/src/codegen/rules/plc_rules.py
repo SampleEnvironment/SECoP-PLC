@@ -21,6 +21,7 @@ General policy
   be required later
 """
 
+import json
 from typing import Any, Optional
 
 from codegen.model.secnode import SecNodeConfig
@@ -124,6 +125,43 @@ def _is_enum_type(secop_type: str) -> bool:
 # ---------------------------------------------------------------------------
 # Core x-plc existence / completeness rules
 # ---------------------------------------------------------------------------
+
+# Max. length of SECOP.GVL.G_st_SecNode.sEquipmentId and sFirmware (STRING)
+PLC_SEC_NODE_STRING_MAX_LEN = 80
+
+
+def rule_plc_sec_node_strings_length(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-PLC-002:
+    equipment_id and firmware must fit in SECOP.GVL.G_st_SecNode.sEquipmentId
+    and sFirmware (STRING, 80 characters).
+
+    The length is measured as the strings are assigned in SecopInit:
+    JSON-encoded, ASCII only, without the surrounding double quotes.
+
+    description is not checked here: R-NODE-002 (430 bytes) is more restrictive
+    than sDescription (GPL.Gc_uiMaxSizeDescription).
+    """
+    findings: list[Finding] = []
+
+    for field, value in (("equipment_id", cfg.equipment_id), ("firmware", cfg.firmware)):
+        length = len(json.dumps(value, ensure_ascii=True)) - 2
+        if length > PLC_SEC_NODE_STRING_MAX_LEN:
+            findings.append(
+                Finding(
+                    rule_id="R-PLC-002",
+                    severity=Severity.ERROR,
+                    path=f"$.{field}",
+                    message=(
+                        f"The field {field} is {length} characters long (JSON-encoded). "
+                        f"It must not exceed {PLC_SEC_NODE_STRING_MAX_LEN} characters "
+                        f"(PLC STRING)."
+                    ),
+                )
+            )
+
+    return findings
+
 
 def rule_xplc_keys_exist_in_secop_accessibles(cfg: SecNodeConfig) -> list[Finding]:
     """
@@ -987,7 +1025,7 @@ def rule_xplc_value_handle_nan_double_only(cfg: SecNodeConfig) -> list[Finding]:
     """
     R-PLC-036:
     x-plc.value.handle_nan is optional, but only allowed for SECoP value type
-    'double' (LREAL). Integer types (int, scaled) can not be NaN.
+    'double' (LREAL). Integer types (int -> DINT) can not be NaN.
     An ERROR is raised for any other value type.
     """
     findings: list[Finding] = []

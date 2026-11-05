@@ -24,6 +24,8 @@ General policy
 """
 
 
+import json
+
 from codegen.model.secnode import SecNodeConfig, Module
 from codegen.rules.types import Finding, Severity
 
@@ -150,6 +152,56 @@ def rule_non_empty_modules(cfg: SecNodeConfig) -> list[Finding]:
                 severity=Severity.ERROR,
                 path="$.modules",
                 message="Node must contain at least one module.",
+            )
+        )
+
+    return findings
+
+
+# Max. combined length of equipment_id, firmware and description in the UDP
+# discovery reply (SECoP specification, UDP discovery / RFC-105)
+UDP_DISCOVERY_MAX_STRINGS_LEN = 430
+
+
+def _json_encoded_len(value: str) -> int:
+    """
+    Length in bytes of a string as it is sent in a JSON message: JSON-encoded,
+    ASCII only, without the surrounding double quotes.
+    """
+    return len(json.dumps(value, ensure_ascii=True)) - 2
+
+
+def rule_udp_discovery_strings_length(cfg: SecNodeConfig) -> list[Finding]:
+    """
+    R-NODE-002:
+    The combined length of equipment_id, firmware and description must not
+    exceed 430 bytes, so that the UDP discovery reply fits in 508 bytes
+    (SECoP specification, UDP discovery).
+
+    The length is measured as the strings are sent by the PLC: JSON-encoded,
+    ASCII only (non-ASCII characters as \\uXXXX escapes).
+
+    The specification allows truncating description instead; the PLC does not
+    truncate, so the configuration must be adapted.
+    """
+    findings: list[Finding] = []
+
+    total = (
+        _json_encoded_len(cfg.equipment_id)
+        + _json_encoded_len(cfg.firmware)
+        + _json_encoded_len(cfg.description)
+    )
+    if total > UDP_DISCOVERY_MAX_STRINGS_LEN:
+        findings.append(
+            Finding(
+                rule_id="R-NODE-002",
+                severity=Severity.ERROR,
+                path="$",
+                message=(
+                    f"The combined length of equipment_id, firmware and description "
+                    f"is {total} bytes (JSON-encoded). It must not exceed "
+                    f"{UDP_DISCOVERY_MAX_STRINGS_LEN} bytes (UDP discovery reply)."
+                ),
             )
         )
 

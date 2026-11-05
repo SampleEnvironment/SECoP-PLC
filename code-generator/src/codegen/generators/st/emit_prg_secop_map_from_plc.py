@@ -4,7 +4,7 @@ ST generator for PROGRAM SecopMapFromPlc.
 This PRG:
 - calls SecopInit on the first CPU cycle
 - maps PLC process data to the SECoP layer
-- updates SEC node timestamp / interface-ready flag
+- updates SEC node timestamp / interface-ready flag / TCP server IP
 - updates each real module
 
 Inputs
@@ -86,12 +86,30 @@ def _emit_call_secop_init() -> list[str]:
 
 
 
+def _format_server_ip(value: str) -> str:
+    """
+    Format the tcp.server_ip value for a ST assignment.
+
+    If the value contains exactly 3 dots it is treated as a literal IP address
+    and emitted as a single-quoted string.
+    Otherwise it is treated as a PLC variable / tag reference and emitted
+    without quotes.
+
+    Examples:
+        "192.168.1.10"  ->  "'192.168.1.10'"
+        "sPlcAddress2"  ->  "sPlcAddress2"
+    """
+    if value.count(".") == 3:
+        return format_st_string_literal(value)
+    return value
+
+
 def _emit_sec_node_mapping(
     resolved: ResolvedRealModules,
     tasklist: TaskList,
 ) -> list[str]:
     """
-    Emit SEC node timestamp and interface-ready mapping.
+    Emit SEC node timestamp, interface-ready and TCP server IP mapping.
 
     These concepts always apply in this project. Missing configured tags are
     turned into task comments and task-list entries.
@@ -131,6 +149,19 @@ def _emit_sec_node_mapping(
                     "SECOP.GVL.G_st_SecNode.xTcpServerInterfaceReady."
                 ),
             )
+        )
+    lines.append("")
+    lines.append("// TCP server IP")
+    if sec_node.tcp_server_ip is None:
+        lines.append(
+            tasklist.make_st_comment(
+                plc_path="SecopMapFromPlc.sec_node.tcp.server_ip",
+                message="Configure SEC node TCP server IP.",
+            )
+        )
+    else:
+        lines.append(
+            f"SECOP.GVL.G_st_SecNode.sTcpServerIp := {_format_server_ip(sec_node.tcp_server_ip)};"
         )
     lines.append("")
 

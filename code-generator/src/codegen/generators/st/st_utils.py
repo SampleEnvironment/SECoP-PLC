@@ -7,6 +7,7 @@ one generator module belong here.
 
 from __future__ import annotations
 
+import json
 import re
 
 
@@ -48,3 +49,20 @@ def format_st_string_literal(value: str) -> str:
     """
     escaped = value.replace("$", "$$").replace("'", "$'")
     return f"'{escaped}'"
+
+
+def json_string_content(value: str) -> str:
+    r"""
+    Return the JSON-encoded form of a string, without the surrounding double
+    quotes, using ASCII only (non-ASCII characters as \uXXXX escapes).
+
+    Used for the SEC node strings that the PLC inserts as they are in JSON
+    messages (e.g. the UDP discovery reply), so that the PLC does not need to
+    escape them at runtime.
+
+    Examples (Python values):
+        "PLC SEC Node Demo"  ->  "PLC SEC Node Demo"
+        "line1\nline2"       ->  "line1\\nline2"
+        "20 °C"              ->  "20 \\u00b0C"
+    """
+    return json.dumps(value, ensure_ascii=True)[1:-1]

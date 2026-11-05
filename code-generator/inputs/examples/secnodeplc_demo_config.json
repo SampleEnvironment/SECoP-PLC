@@ -1,10 +1,10 @@
 {
   "equipment_id": "PLC SEC Node Demo",
-  "description": "SEC Node structure obtained from the Frappy demo server and then modified /adapted to PLC for development and testing purposes",
-  "firmware": "secnodeplc-1.0.0",
+  "description": "SEC Node structure obtained from the Frappy demo server and then modified/adapted to PLC for development and testing purposes",
+  "firmware": "secnodeplc-1.3.0",
   "x-plc": {
     "tcp": {
-      "server_ip": "192.168.1.10",
+      "server_ip": "G_stStatusPlc.G_sIpAddress_If2",
       "server_port": 10767,
       "interface_healthy_tag": "G_stStatusPlc.G_xEthReady_If2"
     },

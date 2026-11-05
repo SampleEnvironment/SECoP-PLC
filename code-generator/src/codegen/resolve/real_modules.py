@@ -233,7 +233,9 @@ class ResolvedRealSecNode:
     The fields below are project-relevant runtime values, not protocol-level
     structural SECoP information.
     """
+    equipment_id: str
     firmware: str
+    description: str
     tcp_server_ip: str | None
     tcp_server_port: int | None
     plc_timestamp_tag: str | None
@@ -740,7 +742,9 @@ def resolve_real_modules(
         sr_head, sr_tail, sr_fragments = _build_structure_report_parts(raw_cfg)
 
     sec_node = ResolvedRealSecNode(
+        equipment_id=str(normalized_cfg.get("equipment_id") or ""),
         firmware=str(normalized_cfg.get("firmware") or ""),
+        description=str(normalized_cfg.get("description") or ""),
         tcp_server_ip=str(tcp_cfg.get("server_ip") or "") or None,
         tcp_server_port=int(tcp_cfg["server_port"]) if tcp_cfg.get("server_port") is not None else None,
         plc_timestamp_tag=str(x_plc_node.get("plc_timestamp_tag") or "") or None,

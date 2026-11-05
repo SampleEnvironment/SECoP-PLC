@@ -36,6 +36,7 @@ from codegen.model.secnode import SecNodeConfig
 from codegen.rules.types import Finding, Severity
 from codegen.rules.secop_rules import (
     rule_non_empty_modules,
+    rule_udp_discovery_strings_length,
     rule_interface_classes_single,
     rule_features_and_offset_not_supported_on_plc,
     rule_required_accessibles,
@@ -61,6 +62,7 @@ from codegen.rules.secop_rules import (
     rule_target_range_restriction_requires_target_range,
 )
 from codegen.rules.plc_rules import (
+    rule_plc_sec_node_strings_length,
     rule_xplc_keys_exist_in_secop_accessibles,
     rule_xplc_node_fields_configured,
     rule_xplc_module_timestamp_tag_configured,
@@ -99,6 +101,7 @@ def validate_config(cfg: SecNodeConfig) -> list[Finding]:
     # SECoP / protocol-level rules
     # ------------------------------------------------------------------
     findings.extend(rule_non_empty_modules(cfg))                         # R-NODE-001
+    findings.extend(rule_udp_discovery_strings_length(cfg))              # R-NODE-002
     findings.extend(rule_interface_classes_single(cfg))                  # R-MOD-001
     findings.extend(rule_features_and_offset_not_supported_on_plc(cfg))  # R-MOD-002
     findings.extend(rule_required_accessibles(cfg))                      # R-CLS-001/002/003
@@ -127,6 +130,7 @@ def validate_config(cfg: SecNodeConfig) -> list[Finding]:
     # PLC / x-plc rules
     # ------------------------------------------------------------------
     findings.extend(rule_xplc_keys_exist_in_secop_accessibles(cfg))              # R-PLC-001
+    findings.extend(rule_plc_sec_node_strings_length(cfg))                       # R-PLC-002
     findings.extend(rule_xplc_node_fields_configured(cfg))                       # R-PLC-010
     findings.extend(rule_xplc_module_timestamp_tag_configured(cfg))              # R-PLC-020
     findings.extend(rule_xplc_status_hw_error_fields_configured(cfg))            # R-PLC-021

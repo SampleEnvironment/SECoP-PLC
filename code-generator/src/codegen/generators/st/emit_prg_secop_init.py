@@ -27,7 +27,7 @@ from codegen.resolve.real_modules import (
     ResolvedRealModules,
 )
 from codegen.tasklist import TaskList
-from codegen.generators.st.st_utils import format_st_string_literal
+from codegen.generators.st.st_utils import format_st_string_literal, json_string_content
 
 
 # ---------------------------------------------------------------------------
@@ -79,24 +79,6 @@ def _format_st_scalar(value: float | int | str) -> str:
     if isinstance(value, float) and value == int(value):
         return str(int(value))
     return str(value)
-
-
-def _format_server_ip(value: str) -> str:
-    """
-    Format the tcp.server_ip value for a ST assignment.
-
-    If the value contains exactly 3 dots it is treated as a literal IP address
-    and emitted as a single-quoted string.
-    Otherwise it is treated as a PLC variable / tag reference and emitted
-    without quotes.
-
-    Examples:
-        "192.168.1.10"  ->  "'192.168.1.10'"
-        "sPlcAddress2"  ->  "sPlcAddress2"
-    """
-    if value.count(".") == 3:
-        return format_st_string_literal(value)
-    return value
 
 
 def _emit_optional_scalar_assignment_with_task(
@@ -175,22 +157,18 @@ def _emit_init_sec_node(
     lines.append("// SEC node")
     lines.append("// ----------------------------------------------------------------")
     lines.append("")
-    lines.append(f"SECOP.GVL.G_st_SecNode.sFirmware := {_format_st_scalar(sec_node.firmware)};")
+    # equipment_id, firmware and description are assigned JSON-encoded (without
+    # the surrounding double quotes, ASCII only), as the PLC inserts them as
+    # they are in the UDP discovery reply.
+    lines.append(f"SECOP.GVL.G_st_SecNode.sEquipmentId := {_format_st_scalar(json_string_content(sec_node.equipment_id))};")
+    lines.append(f"SECOP.GVL.G_st_SecNode.sFirmware := {_format_st_scalar(json_string_content(sec_node.firmware))};")
+    lines.append(f"SECOP.GVL.G_st_SecNode.sDescription := {_format_st_scalar(json_string_content(sec_node.description))};")
 
     # SECoP protocol version is owned by the library since v1.2.0.0
     # (constant GCL.Gc_sSecopVersion). There is no x-plc field for it.
 
-    if sec_node.tcp_server_ip is None:
-        lines.append(
-            tasklist.make_st_comment(
-                plc_path="SecopInit.sec_node.tcp.server_ip",
-                message="Configure SEC node TCP server IP.",
-            )
-        )
-    else:
-        lines.append(
-            f"SECOP.GVL.G_st_SecNode.sTcpServerIp := {_format_server_ip(sec_node.tcp_server_ip)};"
-        )
+    # TCP server IP is assigned in SecopMapFromPlc (it may come from a PLC tag
+    # that is not yet valid on the first cycle, e.g. with DHCP).
 
     lines.extend(
         _emit_optional_scalar_assignment_with_task(
